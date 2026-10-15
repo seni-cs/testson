@@ -573,6 +573,16 @@ pub fn ensure_playwright_cli() -> Result<()> {
 /// written.
 pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Result<Prepared> {
     let mut prepared = prepare_run(data_dir, game_name, url, mode)?;
+    // The agent checks its script with this same program, so it learns what a replay refuses
+    // while it can still fix it.
+    let program = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(str::to_owned))
+        .unwrap_or_else(|| "testson".to_owned());
+    let check_script = format!(
+        "'{program}' check-script '{}' --mode {mode}",
+        absolute(&prepared.dir.join("script.json"))?.display()
+    );
     prepared.prompt = fill_template(
         TEMPLATE,
         TemplateValues {
@@ -588,6 +598,7 @@ pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Resul
                 .context("assets directory is not valid UTF-8")?,
             session_name: &prepared.session_name,
             data_prefix: &prepared.data_prefix,
+            check_script: &check_script,
         },
     )?;
     write_private(&prepared.dir.join("prompt.filled.txt"), &prepared.prompt)?;

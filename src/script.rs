@@ -24,8 +24,12 @@ use crate::run::{Mode, SESSION_COPY};
 
 /// The highest stake a test may bet, in cents.
 const MAX_STAKE_CENTS: i64 = 100;
-/// The highest balance the account without balance may have, in cents: the lowest stake of a slot.
-const MAX_NO_BALANCE_CENTS: i64 = 10;
+/// The balance the account without balance must stay below, in cents: the lowest stake of a slot.
+const NO_BALANCE_BELOW_CENTS: i64 = 10;
+/// How many decimals of an amount are kept before it is rounded to cents.
+const MAX_DECIMALS: usize = 6;
+/// How many of the latest responses a probe of the responses looks through for one that matches.
+const RESPONSES_SEARCHED: usize = 5;
 /// The highest number a script may type, which keeps the loss limit of the gaming session low.
 const MAX_TYPED_NUMBER: f64 = 10.0;
 /// The longest a step may wait or probe.
@@ -67,12 +71,18 @@ const READ_COMMANDS: &[&str] = &["find", "eval"];
 const RAW: &str = "--raw";
 
 /// Controls a script must never reach: the cashier, demo play, bonus purchases and anything that
-/// raises the stake, as the hard rules of the prompt say, and the storage that holds the login.
+/// raises the stake, as the hard rules of the prompt say.
 static FORBIDDEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)\b(deposit\w*|depositar|ingresar|retirar|withdraw\w*|cashier|cajero|caja|demo|modo prueba|jugar gratis|comprar|buy|bono|bonus|autoplay|auto play|auto-play|ante bet|double chance|gamble|localstorage|sessionstorage|cookie\w*)\b",
+        r"(?i)\b(deposit\w*|depositar|ingresar|retirar|withdraw\w*|cashier|cajero|caja|demo|modo prueba|jugar gratis|comprar|buy|bono|bonus|autoplay|auto play|auto-play|ante bet|double chance|gamble)\b",
     )
     .expect("forbidden pattern")
+});
+
+/// The storage that holds the login, which an `eval` must not read. A click may still name a
+/// cookie banner.
+static STORAGE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(localstorage|sessionstorage|cookie\w*)\b").expect("storage pattern")
 });
 
 /// What an `eval` that only reads must not hold: anything that acts, waits, loops or assigns.
@@ -261,9 +271,15 @@ pub fn validate(script: &Script, mode: Mode) -> Result<()> {
     }
     check_balance_readings(script, spin)?;
     if mode == Mode::NoBalance {
+        // The refusal is checked once the bet was tried: after the spin, or after the last action
+        // when the lobby refuses to open the game.
+        let last_action = positions(script, |step| step.role.acts()).last().copied();
         ensure!(
-            script.steps.iter().any(|step| step.role == Role::Expect),
-            "a no_balance script expects the message that the balance is not enough"
+            positions(script, |step| step.role == Role::Expect)
+                .iter()
+                .any(|&expect| last_action.is_none_or(|action| expect > action)),
+            "a no_balance script expects the message that the balance is not enough after its \
+             spin, or after its last action when it does not spin"
         );
         ensure!(
             !reading(Reading::Language).is_empty(),
@@ -378,6 +394,17 @@ fn check_step(step: &Step, after_spin: bool) -> Result<()> {
         !step.optional || step.role == Role::Action,
         "only an action may be optional"
     );
+    // A command without a target, such as a click at coordinates, cannot find that something is
+    // missing, so it would always run.
+    ensure!(
+        !step.optional
+            || step.commands.iter().any(|command| {
+                let (name, target) = name_and_target(command);
+                target.is_some() && !matches!(name.as_str(), "find" | "goto")
+            }),
+        "an optional step needs a command with a target, such as a click on a locator, to find \
+         whether what it handles is shown; coordinates alone always run"
+    );
     ensure!(
         step.timeout_ms
             .is_none_or(|timeout| timeout <= MAX_TIMEOUT_MS),
@@ -425,6 +452,11 @@ fn check_command(command: &[String], role: Role) -> Result<()> {
                     "it types {number}, above the {MAX_TYPED_NUMBER} a loss limit may be"
                 );
             }
+            // type presses each key on what has the focus, and Space spins most games.
+            ensure!(
+                name != "type" || !text.contains(char::is_whitespace),
+                "type presses Space for each space, which spins most games: use fill on the field"
+            );
         }
         // Space spins most games, so it is pressed only by the spin.
         "press" => ensure!(
@@ -436,6 +468,9 @@ fn check_command(command: &[String], role: Role) -> Result<()> {
         ),
         "eval" => {
             let code = arguments.first().context("eval needs a function")?;
+            if let Some(found) = STORAGE.find(code) {
+                bail!("the eval reads {:?}, which holds the login", found.as_str());
+            }
             if let Some(found) = ACTING_CODE.find(code) {
                 bail!(
                     "the eval does more than read the page: {:?}",
@@ -468,6 +503,30 @@ fn is_spanish(text: &str) -> bool {
 /// cents.
 #[must_use]
 pub fn parse_cents(text: &str) -> Option<i64> {
+    let (number, decimals) = parse_decimal(text)?;
+    to_cents(number, decimals)
+}
+
+/// The product of two amounts, such as the coin value and the number of lines that make a
+/// stake, in cents.
+fn product_cents(one: &str, other: &str) -> Option<i64> {
+    let (one, one_decimals) = parse_decimal(one)?;
+    let (other, other_decimals) = parse_decimal(other)?;
+    to_cents(one.checked_mul(other)?, one_decimals + other_decimals)
+}
+
+/// `number` with `decimals` decimal digits, rounded to cents.
+fn to_cents(number: i64, decimals: u32) -> Option<i64> {
+    if decimals <= 2 {
+        return number.checked_mul(10_i64.checked_pow(2 - decimals)?);
+    }
+    let divisor = 10_i64.checked_pow(decimals - 2)?;
+    let half = divisor / 2 * number.signum();
+    Some(number.checked_add(half)? / divisor)
+}
+
+/// The first number in `text`, as its digits and how many of them are decimals.
+fn parse_decimal(text: &str) -> Option<(i64, u32)> {
     static AMOUNT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"-?\d[\d.,]*").expect("amount pattern"));
     let found = AMOUNT.find(text)?.as_str();
@@ -485,16 +544,10 @@ pub fn parse_cents(text: &str) -> Option<i64> {
         None => (digits, ""),
     };
     let whole: String = whole.chars().filter(char::is_ascii_digit).collect();
-    let mut fraction: String = fraction.chars().take(2).collect();
-    while fraction.len() < 2 {
-        fraction.push('0');
-    }
-    let cents = whole
-        .parse::<i64>()
-        .unwrap_or(0)
-        .checked_mul(100)?
-        .checked_add(fraction.parse::<i64>().ok()?)?;
-    Some(if negative { -cents } else { cents })
+    let fraction: String = fraction.chars().take(MAX_DECIMALS).collect();
+    let number: i64 = format!("{whole}{fraction}").parse().ok()?;
+    let decimals = u32::try_from(fraction.len()).ok()?;
+    Some((if negative { -number } else { number }, decimals))
 }
 
 /// What a playwright-cli command printed, and whether it succeeded.
@@ -623,6 +676,7 @@ pub fn replay(browser: &mut impl Browser, context: &Replay<'_>, script: &Script)
         readings: Vec::new(),
         version: None,
         spun: false,
+        mark: None,
     };
     let stop = run.all(script).err();
     run.finish(script, stop.as_ref(), started_at, clock)
@@ -642,6 +696,17 @@ struct Run<'a, B: Browser> {
     version: Option<GameVersion>,
     /// The spin was pressed, or tried: a round may have been played.
     spun: bool,
+    /// What the replay had seen when it pressed spin, so the probes after it read only what came
+    /// later.
+    mark: Option<Mark>,
+}
+
+/// The requests and the postMessages there were when the spin was pressed.
+struct Mark {
+    /// The number of the last request listed, or 0 when the listing could not be read.
+    request: u32,
+    /// When the newest postMessage was received, if any was.
+    message: Option<String>,
 }
 
 impl<B: Browser> Run<'_, B> {
@@ -682,6 +747,7 @@ impl<B: Browser> Run<'_, B> {
         if step.role == Role::Spin {
             self.check_version(&script.game_version)?;
             self.check_stake()?;
+            self.mark = Some(self.mark_spin());
             self.spun = true;
         }
         let result = match step.role {
@@ -779,6 +845,7 @@ impl<B: Browser> Run<'_, B> {
         };
         let timeout = Duration::from_millis(step.timeout_ms.unwrap_or(PROBE_TIMEOUT_MS));
         let attempts = (timeout.as_millis() / POLL_INTERVAL.as_millis()).max(1);
+        let product = step.name == Some(Reading::Stake);
         let started = Instant::now();
         let mut last = Err(String::new());
         for attempt in 0..attempts {
@@ -788,9 +855,13 @@ impl<B: Browser> Run<'_, B> {
                 }
                 self.browser.sleep(POLL_INTERVAL);
             }
-            last = self
-                .probe(step)
-                .and_then(|text| matched(pattern.as_ref(), &text));
+            let result = self
+                .probe(step, pattern.as_ref())
+                .and_then(|text| matched(pattern.as_ref(), &text, product));
+            // A value read once is kept when a later look fails, as while a balance is awaited.
+            if result.is_ok() || last.is_err() {
+                last = result;
+            }
             if last.as_ref().is_ok_and(|value| {
                 awaited.is_none_or(|awaited| parse_cents(value) == Some(awaited))
             }) {
@@ -800,19 +871,66 @@ impl<B: Browser> Run<'_, B> {
         last
     }
 
-    /// The text a probe reads from its source.
-    fn probe(&mut self, step: &Step) -> Result<String, String> {
+    /// The text a probe reads from its source. After the spin, the postMessages and the responses
+    /// are only those that came after it, so a probe never reads what the game said before the
+    /// round. Of the responses, it reads the newest whose body matches `pattern`, since the
+    /// newest may be another call to the same URL, such as the collect of a win, or still have no
+    /// body.
+    fn probe(&mut self, step: &Step, pattern: Option<&Regex>) -> Result<String, String> {
         match step.source {
             Source::Page => self.act(step),
-            Source::Messages => Ok(Value::Array(self.messages()).to_string()),
+            Source::Messages => {
+                let since = self.mark.as_ref().and_then(|mark| mark.message.clone());
+                let messages = self
+                    .messages()
+                    .into_iter()
+                    .filter(|message| {
+                        since
+                            .as_deref()
+                            .is_none_or(|since| message["at"].as_str().is_some_and(|at| at > since))
+                    })
+                    .collect();
+                Ok(Value::Array(messages).to_string())
+            }
             Source::Response => {
+                let after = self.mark.as_ref().map_or(0, |mark| mark.request);
                 let filter = step.url_matches.clone().unwrap_or_default();
                 let listed = self.command(&strings(&["requests", "--filter", &filter]))?;
-                let (index, _) = last_request(&listed)
-                    .ok_or_else(|| format!("no response matched {filter:?} yet"))?;
-                self.command(&strings(&["response-body", &index.to_string()]))
+                let indexes: Vec<u32> = listed_requests(&listed)
+                    .map(|(index, _)| index)
+                    .filter(|&index| index > after)
+                    .collect();
+                let mut newest = None;
+                for index in indexes.into_iter().rev().take(RESPONSES_SEARCHED) {
+                    let Ok(body) = self.command(&strings(&["response-body", &index.to_string()]))
+                    else {
+                        continue;
+                    };
+                    if pattern.is_none_or(|pattern| pattern.is_match(&body)) {
+                        return Ok(body);
+                    }
+                    newest.get_or_insert(body);
+                }
+                newest.ok_or_else(|| format!("no response matched {filter:?} yet"))
             }
         }
+    }
+
+    /// What the replay has seen just before it presses spin.
+    fn mark_spin(&mut self) -> Mark {
+        let listed = self.browser.run(&strings(&["requests", "--static"]));
+        let request = if listed.ok {
+            last_request(&listed.output).map_or(0, |(index, _)| index)
+        } else {
+            0
+        };
+        let message = self
+            .messages()
+            .iter()
+            .filter_map(|message| message["at"].as_str())
+            .max()
+            .map(str::to_owned);
+        Mark { request, message }
     }
 
     /// Stops before the spin when the build.js the game loaded has another ETag than the
@@ -861,7 +979,7 @@ impl<B: Browser> Run<'_, B> {
     fn check_account(&mut self, cents: i64) -> Result<(), Stop> {
         let message = match self.context.mode {
             Mode::RealMoney if cents <= 0 => "The real-money account has no balance: add some.",
-            Mode::NoBalance if cents > MAX_NO_BALANCE_CENTS => {
+            Mode::NoBalance if cents >= NO_BALANCE_BELOW_CENTS => {
                 "The no-balance account has balance, so this is the wrong account: no bet was tried."
             }
             _ => return Ok(()),
@@ -886,6 +1004,13 @@ impl<B: Browser> Run<'_, B> {
                 euros(stake),
                 euros(balance)
             )
+        } else if let Some(balance) = self.payable_balance(stake) {
+            format!(
+                "The stake, {}, is not above the balance, {}, so the bet would be played and \
+                 the spin was not pressed.",
+                euros(stake),
+                euros(balance)
+            )
         } else {
             return Ok(());
         };
@@ -895,6 +1020,18 @@ impl<B: Browser> Run<'_, B> {
             Some(&message),
         ));
         Err(Stop::Blocked(message))
+    }
+
+    /// Without balance, a balance, of Betsson or of the game, that would pay `stake`, so that the
+    /// round would be played for real.
+    fn payable_balance(&self, stake: i64) -> Option<i64> {
+        if self.context.mode != Mode::NoBalance {
+            return None;
+        }
+        [Reading::BalanceBefore, Reading::GameBalanceBefore]
+            .into_iter()
+            .filter_map(|name| self.cents(name))
+            .find(|&balance| stake <= balance)
     }
 
     /// The balance the round should leave from the reading `before`: with real money, less the
@@ -909,13 +1046,24 @@ impl<B: Browser> Run<'_, B> {
     }
 
     /// The balance after the round, of Betsson or of the game, must be the one it should leave.
+    /// Without a reading of the win, a round may have won any amount, so the balance must only
+    /// have lost no more than the stake: whether a round wins is chance, not a fault of the game.
     fn check_balance(&mut self, before: Reading, after: Reading, whose: &str) -> Result<(), Stop> {
         let (Some(expected), Some(read)) = (self.expected_balance(before), self.cents(after))
         else {
             return Ok(());
         };
         let start = euros(self.cents(before).unwrap_or_default());
+        let won_unread = self.context.mode == Mode::RealMoney
+            && self.cents(Reading::Win).is_none()
+            && read > expected;
         let description = match self.context.mode {
+            Mode::RealMoney if won_unread => format!(
+                "Checked the {whose} balance: {start} − {} stake = {}, and the round won {}",
+                euros(self.cents(Reading::Stake).unwrap_or_default()),
+                euros(expected),
+                euros(read - expected)
+            ),
             Mode::RealMoney => format!(
                 "Checked the {whose} balance: {start} − {} stake + {} win = {}",
                 euros(self.cents(Reading::Stake).unwrap_or_default()),
@@ -926,7 +1074,7 @@ impl<B: Browser> Run<'_, B> {
                 format!("Checked that the {whose} balance did not change from {start}")
             }
         };
-        let message = (expected != read).then(|| {
+        let message = (expected != read && !won_unread).then(|| {
             format!(
                 "The {whose} balance after the round is {}, not the {} it should be.",
                 euros(read),
@@ -1174,9 +1322,11 @@ fn verdict(
 }
 
 /// The value `pattern` matched in `text`, at its last match, since sources such as the
-/// postMessages list what they hold oldest first: its first group, or the whole match. Without a
-/// pattern, the whole text, without the quotes `--raw` prints around a string.
-fn matched(pattern: Option<&Regex>, text: &str) -> Result<String, String> {
+/// postMessages list what they hold oldest first: its first group, or the whole match. With
+/// `product`, for the stake, a match with two groups is their product, such as the coin value and
+/// the lines a game server sends instead of the stake. Without a pattern, the whole text, without
+/// the quotes `--raw` prints around a string.
+fn matched(pattern: Option<&Regex>, text: &str, product: bool) -> Result<String, String> {
     let Some(pattern) = pattern else {
         return Ok(text.trim().trim_matches('"').to_owned());
     };
@@ -1187,6 +1337,17 @@ fn matched(pattern: Option<&Regex>, text: &str) -> Result<String, String> {
             quote(text)
         )
     })?;
+    if let (true, Some(one), Some(other)) = (product, found.get(1), found.get(2)) {
+        return product_cents(one.as_str(), other.as_str())
+            .map(euros)
+            .ok_or_else(|| {
+                format!(
+                    "{:?} and {:?} are not two numbers to multiply",
+                    one.as_str(),
+                    other.as_str()
+                )
+            });
+    }
     let value = found.get(1).or_else(|| found.get(0));
     Ok(value.map_or("", |value| value.as_str()).to_owned())
 }
@@ -1297,12 +1458,18 @@ fn without_query(url: &str) -> String {
 
 /// The number and the URL of the last request a `requests` listing shows.
 fn last_request(listing: &str) -> Option<(u32, String)> {
+    listed_requests(listing).last()
+}
+
+/// The number and the URL of each request a `requests` listing shows, oldest first. The numbers
+/// are those of every request since the page loaded, whatever the listing leaves out, so a later
+/// request has a higher one.
+fn listed_requests(listing: &str) -> impl Iterator<Item = (u32, String)> + '_ {
     static LINE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?m)^\s*(\d+)\.\s+\[[A-Z]+\]\s+(\S+)").expect("request line pattern")
     });
     LINE.captures_iter(listing)
         .filter_map(|found| Some((found[1].parse().ok()?, found[2].to_owned())))
-        .last()
 }
 
 /// The ETag in a `response-headers` listing.
@@ -1448,6 +1615,16 @@ mod tests {
             ),
             ("/steps/1/commands", json!([["fill", "#loss-limit", "11"]])),
             ("/steps/1/commands", json!([["press", "Space"]])),
+            ("/steps/1/commands", json!([["type", "Gates of Olympus"]])),
+            (
+                "/steps/4/commands",
+                json!([["--raw", "eval", "() => document.cookie"]]),
+            ),
+            (
+                "/steps/1",
+                json!({ "role": "action", "description": "Close the intro", "optional": true,
+                        "commands": [["mousemove", "720", "800"], ["mousedown"], ["mouseup"]] }),
+            ),
             ("/steps/1/commands", json!([["keydown", "Space"]])),
             ("/steps/1/commands", json!([["--json", "click", "#x"]])),
             ("/steps/6/name", json!("win")),
@@ -1550,6 +1727,12 @@ mod tests {
         let mut simple = script();
         simple["steps"][5]["commands"] = json!([["click", "#spin"]]);
         simple["steps"][1]["optional"] = json!(true);
+        // A cookie banner may be named, though an eval may not read the cookies.
+        simple["steps"].as_array_mut().unwrap().insert(
+            1,
+            json!({ "role": "action", "description": "Accept the cookies", "optional": true,
+                    "commands": [["click", "getByRole('button', { name: 'Aceptar cookies' })"]] }),
+        );
         parsed(&simple).unwrap();
     }
 
@@ -1579,6 +1762,11 @@ mod tests {
         let mut unread = lobby.clone();
         unread["steps"].as_array_mut().unwrap().remove(3);
         assert!(parse(&unread.to_string(), Mode::NoBalance).is_err());
+        // An expect before the bet was tried does not check the refusal.
+        let mut early = lobby.clone();
+        let expect = early["steps"].as_array_mut().unwrap().pop().unwrap();
+        early["steps"].as_array_mut().unwrap().insert(1, expect);
+        assert!(parse(&early.to_string(), Mode::NoBalance).is_err());
     }
 
     #[test]
@@ -1776,13 +1964,25 @@ mod tests {
                   "source": "messages", "matches": "balanceTooLow" }
             ]
         });
+        // The game sends the refusal once spin is pressed.
         let answer = |language: &'static str| {
+            let mut spun = false;
             move |command: &str| {
+                spun |= command == "click #spin";
                 Some(match command {
                     c if c.contains(".empty") => "\"0,00 €\"".to_owned(),
-                    c if c.contains("collect-messages.js") => format!(
-                        r#"[{{"at":"2026-10-15T10:00:00Z","direction":"to_lobby","data":{{"lang":"{language}","name":"balanceTooLow"}}}}]"#
-                    ),
+                    c if c.contains("collect-messages.js") => {
+                        let refusal = if spun {
+                            format!(
+                                r#",{{"at":"2026-10-15T10:00:05Z","direction":"to_lobby","data":{{"lang":"{language}","name":"balanceTooLow"}}}}"#
+                            )
+                        } else {
+                            String::new()
+                        };
+                        format!(
+                            r#"[{{"at":"2026-10-15T10:00:00Z","direction":"to_lobby","data":{{"event":"loaded"}}}}{refusal}]"#
+                        )
+                    }
                     c => game(c),
                 })
             }
@@ -1917,14 +2117,21 @@ mod tests {
             "role": "read", "name": "balance_after", "description": "Read the balance after",
             "source": "messages", "matches": "\"balance\":([\\d.]+)"
         });
+        let mut spun = false;
         let (document, _) = replay_with(
             |command| {
+                spun |= command == "mousedown";
                 if command.contains("collect-messages.js") {
-                    Some(
-                        r#"[{"at":"2026-10-15T10:00:00Z","direction":"to_lobby","data":{"balance":12.4}},
-                           {"at":"2026-10-15T10:00:05Z","direction":"to_lobby","data":{"balance":12.2}}]"#
-                            .to_owned(),
-                    )
+                    // Read after the spin, the message from before it would be a stale balance
+                    // that matches too.
+                    let after = if spun {
+                        r#",{"at":"2026-10-15T10:00:05Z","direction":"to_lobby","data":{"balance":12.2}}"#
+                    } else {
+                        ""
+                    };
+                    Some(format!(
+                        r#"[{{"at":"2026-10-15T10:00:00Z","direction":"to_lobby","data":{{"balance":12.4}}}}{after}]"#
+                    ))
                 } else {
                     Some(game(command))
                 }
@@ -1970,6 +2177,143 @@ mod tests {
         );
         assert_eq!(document["script_outcome"], "step_failed");
         assert!(!spun(&ran));
+    }
+
+    #[test]
+    fn a_round_that_won_without_a_read_of_the_win_works() {
+        let (document, _) = replay_with(
+            |command| {
+                if command.starts_with("response-body") {
+                    Some("tw=0.50&balance=12.70".to_owned())
+                } else {
+                    Some(game(command))
+                }
+            },
+            &script(),
+        );
+        assert_eq!(document["status"], "working", "{document:#}");
+        assert_eq!(document["balance_after"], "12.70");
+        assert_eq!(document["game_balance_after"], "12.70");
+    }
+
+    #[test]
+    fn the_win_and_the_stake_are_read_from_the_game_server() {
+        let mut server = script();
+        server["steps"][4] = json!({
+            "role": "read", "name": "stake", "description": "Read the coin value and the lines",
+            "source": "response", "url_matches": "gameService", "matches": "c=([\\d.]+)&l=(\\d+)"
+        });
+        server["steps"].as_array_mut().unwrap().insert(
+            6,
+            json!({ "role": "read", "name": "win", "description": "Read the win of the round",
+                    "source": "response", "url_matches": "gameService", "matches": "tw=([\\d.]+)" }),
+        );
+        // The response to the spin is listed only at the second look after the press, as when it
+        // is slow, and the collect of the win, which has no win in it, comes after it. The one
+        // listed before the press is the start of the game, which won nothing.
+        let mut looks_after_spin = 0;
+        let (document, _) = replay_with(
+            |command| {
+                if command == "mousedown" {
+                    looks_after_spin = 1;
+                }
+                let answer = match command {
+                    "requests --static" => {
+                        "1. [GET] https://x.pragmaticplay.net/gs2c/build.js => [200] OK\n\
+                         3. [POST] https://x/gs2c/gameService => [200] OK"
+                            .to_owned()
+                    }
+                    c if c.starts_with("requests --filter gameService") => {
+                        let mut listed =
+                            "3. [POST] https://x/gs2c/gameService => [200] OK".to_owned();
+                        if looks_after_spin > 1 {
+                            listed.push_str(
+                                "\n9. [POST] https://x/gs2c/gameService => [200] OK\n\
+                                 10. [POST] https://x/gs2c/gameService => [200] OK",
+                            );
+                        }
+                        if looks_after_spin > 0 {
+                            looks_after_spin += 1;
+                        }
+                        listed
+                    }
+                    "response-body 3" => "tw=0.00&balance=12.40&c=0.01&l=20".to_owned(),
+                    "response-body 9" => "tw=0.50&balance=12.20&c=0.01&l=20".to_owned(),
+                    "response-body 10" => "balance=12.70&na=s".to_owned(),
+                    c => game(c),
+                };
+                Some(answer)
+            },
+            &server,
+        );
+        assert_eq!(document["status"], "working", "{document:#}");
+        let checked = document["steps"].as_array().unwrap().iter().any(|step| {
+            step["description"]
+                == "Checked the Betsson balance: 12,40 € − 0,20 € stake + 0,50 € win = 12,70 €"
+        });
+        assert!(checked, "{document:#}");
+    }
+
+    /// A `no_balance` script that opens the game and tries to bet, whose balances and stake the
+    /// page shows.
+    fn no_balance_script() -> Value {
+        let read = |name: &str, class: &str| {
+            json!({ "role": "read", "name": name, "description": format!("Read the {name}"),
+                    "commands": [["--raw", "eval", format!("() => document.querySelector('.{class}').textContent")]] })
+        };
+        json!({
+            "script_version": 1,
+            "mode": "no_balance",
+            "game_version": { "build_url": "https://x.pragmaticplay.net/gs2c/build.js", "etag": "\"abc\"" },
+            "steps": [
+                read("balance_before", "nb-balance"),
+                { "role": "action", "description": "Open the game", "commands": [["click", ".game"]] },
+                read("game_balance_before", "nb-game-balance"),
+                read("stake", "stake"),
+                { "role": "spin", "description": "Press spin", "commands": [["click", "#spin"]] },
+                read("balance_after", "nb-balance"),
+                read("game_balance_after", "nb-game-balance"),
+                read("currency", "currency"),
+                { "role": "read", "name": "language", "description": "Read the message",
+                  "commands": [["find", "Saldo insuficiente"]], "matches": "(Saldo insuficiente)" },
+                { "role": "expect", "description": "The game says the balance is not enough",
+                  "commands": [["find", "Saldo insuficiente"]], "matches": "Saldo insuficiente" }
+            ]
+        })
+    }
+
+    #[test]
+    fn a_no_balance_account_that_could_pay_the_stake_never_bets() {
+        let refuse = |balance: &'static str, game_balance: &'static str, stake: &'static str| {
+            move |command: &str| {
+                Some(match command {
+                    c if c.contains(".nb-balance") => balance.to_owned(),
+                    c if c.contains(".nb-game-balance") => game_balance.to_owned(),
+                    c if c.contains(".stake") => stake.to_owned(),
+                    c if c.starts_with("find Saldo") => "- text \"Saldo insuficiente\"".to_owned(),
+                    c => game(c),
+                })
+            }
+        };
+        let (document, ran) = replay_with(
+            refuse("\"0,05 €\"", "\"0,05 €\"", "\"0,20 €\""),
+            &no_balance_script(),
+        );
+        assert_eq!(document["status"], "working", "{document:#}");
+        assert!(ran.iter().any(|command| command == "click #spin"));
+        for (balance, game_balance, stake) in [
+            ("\"0,10 €\"", "\"0,00 €\"", "\"0,20 €\""),
+            ("\"0,05 €\"", "\"0,20 €\"", "\"0,20 €\""),
+            ("\"0,05 €\"", "\"0,05 €\"", "\"0,05 €\""),
+        ] {
+            let (document, ran) =
+                replay_with(refuse(balance, game_balance, stake), &no_balance_script());
+            assert_eq!(
+                document["script_outcome"], "blocked",
+                "{balance} {game_balance} {stake}"
+            );
+            assert!(!ran.iter().any(|command| command == "click #spin"));
+        }
     }
 
     #[test]

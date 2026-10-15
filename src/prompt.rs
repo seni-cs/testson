@@ -33,6 +33,8 @@ pub struct TemplateValues<'a> {
     pub session_name: &'a str,
     /// URL path `assets_dir` is served at, the prefix of video and screenshot paths.
     pub data_prefix: &'a str,
+    /// The command that checks the replay script the agent wrote against the rules of a replay.
+    pub check_script: &'a str,
 }
 
 /// Accepts an `https` URL whose registrable label is `betsson`. Used as a clap value parser.
@@ -124,6 +126,7 @@ pub fn fill_template(template: &str, values: TemplateValues<'_>) -> Result<Strin
         ("ASSETS_DIR", values.assets_dir),
         ("SESSION_NAME", values.session_name),
         ("DATA_PREFIX", values.data_prefix),
+        ("CHECK_SCRIPT", values.check_script),
         ("SCHEMA", REPORT_SCHEMA.trim_end_matches('\n')),
         ("SCRIPT_SCHEMA", SCRIPT_SCHEMA.trim_end_matches('\n')),
     ];
@@ -164,6 +167,7 @@ mod tests {
         assets_dir: "/tmp/assets",
         session_name: "betsson-alpha",
         data_prefix: "/data/assets/alpha",
+        check_script: "testson check-script",
     };
 
     #[test]
@@ -224,12 +228,12 @@ mod tests {
     #[test]
     fn fill_requires_every_placeholder() {
         let filled = fill_template(
-            "{{GAME_NAME}}|{{MODE}}|{{MODE_INSTRUCTIONS}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{SCHEMA}}|{{SCRIPT_SCHEMA}}",
+            "{{GAME_NAME}}|{{MODE}}|{{MODE_INSTRUCTIONS}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{CHECK_SCRIPT}}|{{SCHEMA}}|{{SCRIPT_SCHEMA}}",
             VALUES,
         )
         .unwrap();
         assert!(filled.starts_with(
-            "Alpha|no_balance|Mode no_balance.|https://www.betsson.es/casino|/tmp/out|/tmp/assets|betsson-alpha|/data/assets/alpha|{"
+            "Alpha|no_balance|Mode no_balance.|https://www.betsson.es/casino|/tmp/out|/tmp/assets|betsson-alpha|/data/assets/alpha|testson check-script|{"
         ));
         let error = fill_template("{{GAME_NAME}}", VALUES)
             .unwrap_err()
