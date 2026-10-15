@@ -1,19 +1,29 @@
 // The language and region whose conventions dates and numbers are written in.
-const LOCALE = "es-ES";
+const LOCALE = "en-GB";
 
 // What the latest test of a game found, or `untested` for a game without tests.
 const STATUS_LABELS = {
-    working: "Funcionando",
-    failing: "Fallando",
-    test_failed: "Fallo del test",
-    untested: "Sin testear",
+    working: "Working",
+    failing: "Failing",
+    test_failed: "Test failed",
+    untested: "Untested",
 };
+
+// The statuses from the one that most needs looking at to the one that least does.
+const SEVERITY = ["failing", "test_failed", "untested", "working"];
+
+// A game stands where the latest test of each mode left it, whatever the earlier ones found, and
+// is filtered and counted by the status of the two that most needs looking at.
+function gameStatus(game) {
+    const statuses = MODES.map((mode) => game[mode]?.status ?? "untested");
+    return SEVERITY.find((status) => statuses.includes(status));
+}
 
 // The account a test played with. Tests from before there were two accounts were played in demo
 // mode.
 const MODE_LABELS = {
-    real_money: "Dinero real",
-    no_balance: "Sin saldo",
+    real_money: "Real money",
+    no_balance: "No balance",
     demo: "Demo",
 };
 
@@ -21,12 +31,12 @@ const MODE_LABELS = {
 const MODES = ["real_money", "no_balance"];
 
 // What drove the browser in a test: the AI agent, or the script an agent run left.
-const RUNNER_LABELS = { agent: "IA", script: "Script" };
+const RUNNER_LABELS = { agent: "AI", script: "Script" };
 
 // Build the mark of who ran a test.
 function renderRunner(runner) {
     const mark = element("span", `runner ${runner}`, RUNNER_LABELS[runner]);
-    mark.title = runner === "script" ? "Repetido con el script, sin IA" : "Probado por la IA";
+    mark.title = runner === "script" ? "Replayed from the script, without AI" : "Tested by the AI";
     return mark;
 }
 
@@ -104,7 +114,7 @@ function showError(message) {
 async function fetchJson(url) {
     const response = await fetch(url);
     if (!response.ok) {
-        throw new Error(`el servidor respondió con el estado ${response.status}`);
+        throw new Error(`the server responded with status ${response.status}`);
     }
     return response.json();
 }

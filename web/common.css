@@ -22,18 +22,23 @@
     --font-md: 0.875rem;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --background: #121422;
-        --surface: #1b1d2b;
-        --surface-accent: #272a3d;
-        --border: #2e3147;
-        --text: #ffffffde;
-        --text-muted: #ffffff99;
-        --primary: #ff8533;
-        --primary-text: #ff8533;
-        --test-failed: #facc15;
-    }
+/* The theme `theme.js` puts on the page: the one the reader picked, or the one their system
+   prefers. */
+:root[data-theme="light"] {
+    color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --background: #121422;
+    --surface: #1b1d2b;
+    --surface-accent: #272a3d;
+    --border: #2e3147;
+    --text: #ffffffde;
+    --text-muted: #ffffff99;
+    --primary: #ff8533;
+    --primary-text: #ff8533;
+    --test-failed: #facc15;
 }
 
 body {
@@ -91,9 +96,70 @@ main {
 
 /* The wordmark starts where the content of the page does, however wide the screen is. */
 .topbar {
+    align-items: center;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 0.625rem max(1.5rem, calc((100% - 1200px) / 2));
+    display: flex;
+    gap: 1.5rem;
+    padding: 0.625rem max(1rem, calc((100% - 1200px) / 2));
+}
+
+.nav {
+    display: flex;
+    gap: 0.25rem;
+    margin-right: auto;
+}
+
+.nav a {
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
+    font-size: var(--font-md);
+    font-weight: 600;
+    padding: 0.375rem 0.75rem;
+}
+
+.nav a:hover {
+    background: var(--surface-accent);
+    color: var(--text);
+    text-decoration: none;
+}
+
+.nav a[aria-current="page"] {
+    color: var(--text);
+}
+
+/* A round button with the moon in the light theme and the sun in the dark one. */
+.theme-toggle {
+    align-items: center;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    height: 2.25rem;
+    justify-content: center;
+    padding: 0;
+    width: 2.25rem;
+}
+
+.theme-toggle:hover {
+    border-color: var(--primary);
+    color: var(--primary-text);
+}
+
+.theme-toggle svg {
+    fill: none;
+    height: 1.125rem;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 2;
+    width: 1.125rem;
+}
+
+:root[data-theme="light"] .theme-toggle .sun,
+:root[data-theme="dark"] .theme-toggle .moon {
+    display: none;
 }
 
 .brand {

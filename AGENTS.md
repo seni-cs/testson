@@ -68,4 +68,4 @@ the binary, so restart it after each edit to them.
 
 ## Conventions
 
-- Code, comments and documentation are in English. The text the pages show is in Spanish.
+- Code, comments and documentation are in English. The text the pages show is in English too.

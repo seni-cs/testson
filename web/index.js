@@ -1,20 +1,10 @@
 // What each status of a game means, in the order the legend and the filters list them.
 const STATUS_MEANINGS = {
-    working: "Los últimos tests con dinero real y sin saldo completaron todos sus pasos.",
-    failing: "En alguno de los últimos tests el juego no se comportó como se esperaba.",
-    test_failed: "Alguno de los últimos tests no pudo completarse, así que no dice nada sobre el juego.",
-    untested: "Todavía falta alguno de los dos tests.",
+    working: "The latest real-money and no-balance tests completed every step.",
+    failing: "In one of the latest tests the game did not behave as expected.",
+    test_failed: "One of the latest tests could not complete, so it says nothing about the game.",
+    untested: "One of the two tests is still missing.",
 };
-
-// The statuses from the one that most needs looking at to the one that least does.
-const SEVERITY = ["failing", "test_failed", "untested", "working"];
-
-// A game stands where the latest test of each mode left it, whatever the earlier ones found, and
-// is filtered by the status of the two that most needs looking at.
-function gameStatus(game) {
-    const statuses = MODES.map((mode) => game[mode]?.status ?? "untested");
-    return SEVERITY.find((status) => statuses.includes(status));
-}
 
 function renderGame(game) {
     const card = element("a", "card game");
@@ -26,7 +16,7 @@ function renderGame(game) {
         ...MODES.map((mode) => {
             const latest = game[mode];
             const status = latest?.status ?? "untested";
-            const tested = latest ? formatDay(latest.started_at) : "Nunca";
+            const tested = latest ? formatDay(latest.started_at) : "Never";
             const value = [renderLabelledDot(status), tested];
             if (latest) {
                 value.push(renderRunner(latest.runner));
@@ -64,7 +54,7 @@ function renderFilters(cards) {
         // The page opens with every card in sight, which is what the first button stands for.
         button.ariaPressed = String(status === null);
         if (status === null) {
-            button.append("Todos");
+            button.append("All");
         } else {
             const label = element("span", "label", STATUS_LABELS[status]);
             button.append(renderDot(status), label);
@@ -104,7 +94,7 @@ async function showGames() {
     const container = document.getElementById("games");
     if (games.length === 0) {
         container.append(
-            renderEmpty("Aún no hay juegos", "Aparecerán aquí en cuanto se añada el primero."),
+            renderEmpty("No games yet", "They will show here as soon as the first one is added."),
         );
         return;
     }
@@ -115,4 +105,4 @@ async function showGames() {
 }
 
 setUpLegend();
-showGames().catch((error) => showError(`No se pudieron cargar los juegos: ${error.message}`));
+showGames().catch((error) => showError(`Could not load the games: ${error.message}`));

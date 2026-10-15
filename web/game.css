@@ -131,6 +131,8 @@ figcaption {
     max-height: min(65vh, 34rem);
     overflow-y: auto;
     padding-right: 0.625rem;
+    /* The tests are placed against it when the list is scrolled to one of them. */
+    position: relative;
     scrollbar-width: thin;
 }
 
@@ -229,34 +231,17 @@ figcaption {
 }
 
 .test-mode-label {
-    align-items: start;
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    gap: 0.25rem;
-    line-height: 1.2;
-    min-width: 0;
-}
-
-/* The mode on one line, and who ran the test and when on the next. */
-.test-mode-name {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.test-meta {
     align-items: center;
     display: flex;
+    flex: 1;
     gap: 0.375rem;
+    line-height: 1.2;
+    min-width: 0;
+    white-space: nowrap;
 }
 
-.test-link .when {
-    color: var(--text-muted);
-    font-size: var(--font-2xs);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
+.test-mode-label .runner {
+    font-size: 0.5625rem;
 }
 
 /* Beside the test on wide screens, where the list stays in view while the test scrolls. */

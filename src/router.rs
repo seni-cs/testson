@@ -8,7 +8,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use tower_http::services::ServeDir;
 
-use crate::db::{self, Game, GameSummary};
+use crate::db::{self, Game, GameSummary, StatsTest};
 
 /// Directory of the data directory whose files are served, at [`ASSETS_URL`].
 pub const ASSETS_DIR: &str = "assets";
@@ -25,13 +25,18 @@ const PAGES: &[(&str, &str, &str)] = &[
     ("/", HTML, INDEX_PAGE),
     ("/index.html", HTML, INDEX_PAGE),
     ("/game.html", HTML, GAME_PAGE),
+    ("/stats", HTML, STATS_PAGE),
     ("/404.html", HTML, NOT_FOUND_PAGE),
     ("/common.css", CSS, include_str!("../web/common.css")),
     ("/common.js", JS, include_str!("../web/common.js")),
+    ("/theme.js", JS, include_str!("../web/theme.js")),
     ("/index.css", CSS, include_str!("../web/index.css")),
     ("/index.js", JS, include_str!("../web/index.js")),
     ("/game.css", CSS, include_str!("../web/game.css")),
     ("/game.js", JS, include_str!("../web/game.js")),
+    ("/stats.html", HTML, STATS_PAGE),
+    ("/stats.css", CSS, include_str!("../web/stats.css")),
+    ("/stats.js", JS, include_str!("../web/stats.js")),
 ];
 
 const HTML: &str = "text/html; charset=utf-8";
@@ -39,6 +44,7 @@ const CSS: &str = "text/css; charset=utf-8";
 const JS: &str = "text/javascript; charset=utf-8";
 const INDEX_PAGE: &str = include_str!("../web/index.html");
 const GAME_PAGE: &str = include_str!("../web/game.html");
+const STATS_PAGE: &str = include_str!("../web/stats.html");
 const NOT_FOUND_PAGE: &str = include_str!("../web/404.html");
 
 /// Tells browsers to ask whether a file of the pages changed before reusing their copy of it,
@@ -55,6 +61,7 @@ pub fn router(data_dir: &std::path::Path) -> Router {
         .route("/api/games", get(list_games))
         .route("/api/game/{game_id}", get(get_game))
         .route("/api/test/{test_id}", get(get_test))
+        .route("/api/stats", get(get_stats))
         .route("/game/{game_id}", get(get_game_page))
         .nest_service(ASSETS_URL, assets)
         .fallback(get_page)
@@ -135,6 +142,13 @@ async fn get_game_page(
 
 async fn list_games(State(data_dir): State<PathBuf>) -> Result<Json<Vec<GameSummary>>, Error> {
     Ok(Json(db::select_games(&data_dir)?))
+}
+
+/// How many of the latest tests of each game the stats page shows.
+const STATS_TESTS: u32 = 30;
+
+async fn get_stats(State(data_dir): State<PathBuf>) -> Result<Json<Vec<StatsTest>>, Error> {
+    Ok(Json(db::select_latest_tests(&data_dir, STATS_TESTS)?))
 }
 
 async fn get_game(

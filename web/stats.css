@@ -1,0 +1,164 @@
+.heading {
+    margin-bottom: 1.25rem;
+}
+
+.overall {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.banner {
+    align-items: center;
+    border-radius: var(--radius);
+    color: #ffffff;
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+}
+
+.banner.working {
+    background: var(--success);
+}
+
+.banner.failing {
+    background: var(--failure);
+}
+
+.banner .dot {
+    background: #ffffff;
+}
+
+.stats {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+
+.stat {
+    display: grid;
+    padding: 1rem 1.25rem;
+}
+
+.stat .label {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.stat .value {
+    font-size: 1.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The games share one grid, their bars in one column, so the rows read as a single board. */
+.board {
+    --name-width: 13rem;
+    --uptime-width: 4.5rem;
+    padding: 1.25rem;
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem 1rem;
+    list-style: none;
+    margin: 0.5rem 0 1rem;
+    padding: 0;
+}
+
+.legend li {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    font-size: var(--font-sm);
+    gap: 0.375rem;
+}
+
+/* The dot of a missing test is drawn as faint as its bar. */
+.legend .dot.untested {
+    background: var(--border);
+}
+
+.game-rows {
+    display: grid;
+    gap: 0.375rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.game-row {
+    align-items: center;
+    column-gap: 1rem;
+    display: grid;
+    font-size: var(--font-sm);
+    grid-template-columns: var(--name-width) minmax(0, 1fr) var(--uptime-width);
+}
+
+.row-name {
+    color: var(--text);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.row-uptime {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+/* One bar per test, as status pages draw them, oldest on the left, in the colours of the dots. */
+.bars {
+    display: flex;
+    gap: 1px;
+    height: 1.25rem;
+}
+
+.bar {
+    background: var(--border);
+    border-radius: 1px;
+    flex: 1;
+}
+
+.bar:hover {
+    opacity: 0.7;
+}
+
+.bar.working {
+    background: var(--success);
+}
+
+.bar.failing {
+    background: var(--failure);
+}
+
+.bar.test_failed {
+    background: var(--test-failed);
+}
+
+/* Under the column of the bars only. */
+.row-axis {
+    display: flex;
+    font-size: var(--font-xs);
+    justify-content: space-between;
+    margin: 0.5rem calc(var(--uptime-width) + 1rem) 0 calc(var(--name-width) + 1rem);
+}
+
+/* A phone puts the name and the uptime above the bars. */
+@media (max-width: 640px) {
+    .game-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        row-gap: 0.25rem;
+    }
+
+    .bars {
+        grid-column: 1 / -1;
+    }
+
+    .row-axis {
+        margin: 0.5rem 0 0;
+    }
+}

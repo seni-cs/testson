@@ -1,22 +1,22 @@
-const CONSOLE_LEVELS = { error: "Error", warning: "Aviso" };
+const CONSOLE_LEVELS = { error: "Error", warning: "Warning" };
 
 // Which window of the page received a postMessage.
-const DIRECTIONS = { to_lobby: "Al lobby", to_frame: "Al juego" };
+const DIRECTIONS = { to_lobby: "To lobby", to_frame: "To game" };
 
 // How far a replay of a script got.
 const SCRIPT_OUTCOMES = {
-    completed: "Completo",
-    step_failed: "Un paso del script falló",
-    failed_after_spin: "Un paso falló tras la tirada",
-    version_changed: "Nueva versión del juego",
-    blocked: "Bloqueado por la cuenta o la apuesta",
+    completed: "Completed",
+    step_failed: "A step of the script failed",
+    failed_after_spin: "A step failed after the spin",
+    version_changed: "New version of the game",
+    blocked: "Blocked by the account or the stake",
 };
 
 // Why a script stopped being replayed.
 const RETIRED_REASONS = {
-    version_changed: "el juego cambió de versión",
-    step_failed: "un paso dejó de funcionar",
-    replaced: "la IA dejó uno nuevo",
+    version_changed: "the game changed version",
+    step_failed: "a step stopped working",
+    replaced: "the AI left a new one",
 };
 
 function formatDateTime(timestamp) {
@@ -82,9 +82,9 @@ function renderProperties(test) {
         ranBy.push(` ${test.script_id}`);
     }
     properties.append(
-        renderFact("Resultado", STATUS_LABELS[test.status]),
-        renderFact("Ejecutado por", ...ranBy),
-        renderFact("Duración", formatDuration(test.duration_ms)),
+        renderFact("Result", STATUS_LABELS[test.status]),
+        renderFact("Run by", ...ranBy),
+        renderFact("Duration", formatDuration(test.duration_ms)),
     );
     if (test.script_outcome) {
         properties.append(renderFact("Script", SCRIPT_OUTCOMES[test.script_outcome]));
@@ -92,22 +92,22 @@ function renderProperties(test) {
     if (test.game_version) {
         const version = element("code", "", shortVersion(test.game_version.etag));
         version.title = `${test.game_version.build_url} · ${test.game_version.etag}`;
-        properties.append(renderFact("Versión", version));
+        properties.append(renderFact("Version", version));
     }
 
     const { browser, viewport } = test.environment ?? {};
     if (browser) {
-        properties.append(renderFact("Navegador", browser));
+        properties.append(renderFact("Browser", browser));
     }
     if (viewport) {
-        properties.append(renderFact("Resolución", `${viewport.width}×${viewport.height}`));
+        properties.append(renderFact("Resolution", `${viewport.width}×${viewport.height}`));
     }
     if (test.game_url) {
-        const game = element("a", "", "Abrir");
+        const game = element("a", "", "Open");
         game.href = test.game_url;
         game.target = "_blank";
         game.rel = "noreferrer";
-        properties.append(renderFact("Juego", game));
+        properties.append(renderFact("Game", game));
     }
     return properties;
 }
@@ -115,7 +115,7 @@ function renderProperties(test) {
 function renderScreenshot(screenshot) {
     const caption = screenshot.caption ?? "";
     // The image is all the button holds, so its description is also what names the button.
-    const description = caption || "Captura de pantalla";
+    const description = caption || "Screenshot";
 
     const preview = element("img");
     // The loading mode only takes effect when it is set before the source.
@@ -144,18 +144,18 @@ function renderScreenshot(screenshot) {
 function renderVideo(path) {
     const thumbnail = element("button", "thumbnail video");
     thumbnail.type = "button";
-    thumbnail.ariaLabel = "Reproducir la grabación";
+    thumbnail.ariaLabel = "Play the recording";
     // The video element is only created on request, so the recording is not fetched before.
     thumbnail.addEventListener("click", () => {
         const video = element("video");
         video.src = path;
         video.controls = true;
         video.autoplay = true;
-        openViewer(video, "Grabación del test");
+        openViewer(video, "Recording of the test");
     });
 
     const figure = element("figure");
-    figure.append(thumbnail, element("figcaption", "", "Grabación"));
+    figure.append(thumbnail, element("figcaption", "", "Recording"));
     return figure;
 }
 
@@ -189,17 +189,17 @@ function renderConsole(messages) {
     const warnings = messages.length - errors;
     const badges = [];
     if (errors > 0) {
-        badges.push(element("span", "badge error", formatCount(errors, "error", "errores")));
+        badges.push(element("span", "badge error", formatCount(errors, "error", "errors")));
     }
     if (warnings > 0) {
-        badges.push(element("span", "badge warning", formatCount(warnings, "aviso", "avisos")));
+        badges.push(element("span", "badge warning", formatCount(warnings, "warning", "warnings")));
     }
 
     const rows = messages.map((message) => {
         const badge = element("span", `badge ${message.level}`, CONSOLE_LEVELS[message.level]);
         return renderLogRow(badge, message.text, message.source_url);
     });
-    return renderLog("Consola", badges, rows);
+    return renderLog("Console", badges, rows);
 }
 
 function renderFailedRequests(requests) {
@@ -208,7 +208,7 @@ function renderFailedRequests(requests) {
         return renderLogRow(badge, `${request.method} ${request.url}`);
     });
     const count = element("span", "badge failed", requests.length);
-    return renderLog("Peticiones fallidas", [count], rows);
+    return renderLog("Failed requests", [count], rows);
 }
 
 function renderPostMessages(messages) {
@@ -219,7 +219,7 @@ function renderPostMessages(messages) {
         return renderLogRow(badge, JSON.stringify(message.data), source);
     });
     const count = element("span", "badge", messages.length);
-    return renderLog("Mensajes postMessage", [count], rows);
+    return renderLog("postMessage messages", [count], rows);
 }
 
 function renderStep(step) {
@@ -286,10 +286,10 @@ async function loadTest(test, title) {
     try {
         stored = await fetchJson(`/api/test/${test.id}`);
     } catch (error) {
-        const retry = element("button", "button", "Reintentar");
+        const retry = element("button", "button", "Retry");
         retry.type = "button";
         retry.addEventListener("click", () => showTest(test));
-        const message = `No se pudo cargar el test: ${error.message}`;
+        const message = `Could not load the test: ${error.message}`;
         return [title, element("p", "failure", message), retry];
     }
 
@@ -298,7 +298,7 @@ async function loadTest(test, title) {
     } catch (error) {
         // The message on the page is for its reader; the console keeps where it came from.
         console.error(error);
-        return [title, element("p", "failure", `No se pudo mostrar el test: ${error.message}`)];
+        return [title, element("p", "failure", `Could not show the test: ${error.message}`)];
     }
 }
 
@@ -339,13 +339,11 @@ function renderTestLink(test) {
     link.href = testHash(test);
     const runner = test.runner ?? "agent";
     link.ariaLabel = `${MODE_LABELS[test.mode]} · ${formatDateTime(test.started_at)} · ${STATUS_LABELS[test.status]} · ${RUNNER_LABELS[runner]} · Test ${test.id}`;
-    // The time tells apart the tests of a mode on the same day.
-    const time = element("time", "when", formatTestTime(test.started_at));
-    time.dateTime = test.started_at;
-    const meta = element("span", "test-meta");
-    meta.append(renderRunner(runner), time);
-    const label = element("span", "test-mode-label");
-    label.append(element("span", "test-mode-name", MODE_LABELS[test.mode]), meta);
+    const label = element("span", "test-mode-label", MODE_LABELS[test.mode]);
+    // Only the tests the AI ran are marked, the exception among the replays.
+    if (runner === "agent") {
+        label.append(renderRunner(runner));
+    }
     link.append(renderLabelledDot(test.status), label);
     return link;
 }
@@ -368,7 +366,10 @@ function renderTestGroups(tests) {
     return Array.from(days.values(), (day) => {
         const group = element("section", "test-day");
         const heading = element("h3", "test-day-heading", formatDay(day[0].started_at));
-        heading.append(element("span", "when", `${day.length} ${day.length === 1 ? "test" : "tests"}`));
+        const earliest = day[day.length - 1].started_at;
+        const time = element("time", "when", formatTestTime(earliest));
+        time.dateTime = earliest;
+        heading.append(time);
         const columns = element("div", "test-modes");
         // Preserve reports from before the two account modes as their own column.
         const modes = day.some((test) => test.mode !== "demo") ? [...MODES] : [];
@@ -380,10 +381,7 @@ function renderTestGroups(tests) {
             if (!matching.length) {
                 continue;
             }
-            // The columns are read one after the other, so each says which mode it holds.
             const column = element("div", `test-mode ${mode}`);
-            column.role = "group";
-            column.ariaLabel = MODE_LABELS[mode];
             const list = element("div", "test-mode-list");
             list.append(...matching.map(renderTestLink));
             column.append(list);
@@ -435,14 +433,14 @@ function showSelectedTest(tests) {
 function renderBanner(game) {
     // Whether the game can be played for fun is a yes or a no, so it is a mark of its own.
     const demo = game.is_available_for_fun
-        ? element("span", "chip available", "Modo demo")
-        : element("span", "chip unavailable", "Sin modo demo");
+        ? element("span", "chip available", "Demo mode")
+        : element("span", "chip unavailable", "No demo mode");
     const meta = element("div", "meta");
     meta.append(element("span", "provider", game.provider));
     if (game.primary_type) {
         meta.append(element("span", "chip", game.primary_type));
     }
-    meta.append(demo, element("span", "chip", `Añadido el ${formatDay(game.added_on, "UTC")}`));
+    meta.append(demo, element("span", "chip", `Added on ${formatDay(game.added_on, "UTC")}`));
 
     const about = element("div");
     about.append(element("h1", "", game.name), meta);
@@ -461,36 +459,36 @@ function historyEvents(game) {
         let verdict = null;
         tests.forEach((test, index) => {
             if (index === 0) {
-                add(test.started_at, mode, `Primer test, con ${RUNNER_LABELS[test.runner]}`, test.id);
+                add(test.started_at, mode, `First test, by ${RUNNER_LABELS[test.runner]}`, test.id);
             }
             if (test.etag && version && test.etag !== version) {
                 const change = `${shortVersion(version)} → ${shortVersion(test.etag)}`;
-                add(test.started_at, mode, `Nueva versión del juego: ${change}`, test.id);
+                add(test.started_at, mode, `New version of the game: ${change}`, test.id);
             }
             version = test.etag ?? version;
             if (test.script_outcome && test.script_outcome !== "completed") {
                 const next = {
                     blocked: "",
-                    failed_after_spin: ", se prueba con IA en el siguiente test",
-                }[test.script_outcome] ?? ", se prueba con IA";
+                    failed_after_spin: ", the AI tests it at the next test",
+                }[test.script_outcome] ?? ", the AI tests it";
                 const text = `Script ${test.script_id}: ${SCRIPT_OUTCOMES[test.script_outcome]}${next}`;
                 add(test.started_at, mode, text, test.id);
             }
             if (test.status === "working" || test.status === "failing") {
                 if (verdict && verdict !== test.status) {
                     const change = `${STATUS_LABELS[verdict]} → ${STATUS_LABELS[test.status]}`;
-                    add(test.started_at, mode, `Estado: ${change}`, test.id);
+                    add(test.started_at, mode, `Status: ${change}`, test.id);
                 }
                 verdict = test.status;
             }
         });
     }
     for (const script of game.scripts) {
-        const created = `Script ${script.id} creado por la IA, versión ${shortVersion(script.etag)}`;
+        const created = `Script ${script.id} created by the AI, version ${shortVersion(script.etag)}`;
         add(script.created_at, script.mode, created, script.created_by_test);
         if (script.retired_at) {
             const why = RETIRED_REASONS[script.retired_reason];
-            add(script.retired_at, script.mode, `Script ${script.id} retirado: ${why}`, null);
+            add(script.retired_at, script.mode, `Script ${script.id} retired: ${why}`, null);
         }
     }
     return events.sort((a, b) => b.at.localeCompare(a.at));
@@ -522,8 +520,8 @@ async function showGame() {
         const article = document.getElementById("test");
         article.append(
             renderEmpty(
-                "Este juego aún no tiene tests",
-                "Sus resultados aparecerán aquí en cuanto se ejecute el primero.",
+                "This game has no tests yet",
+                "Its results will show here as soon as the first one runs.",
             ),
         );
         article.hidden = false;
@@ -540,4 +538,4 @@ async function showGame() {
 }
 
 setUpViewer();
-showGame().catch((error) => showError(`No se pudo cargar el juego: ${error.message}`));
+showGame().catch((error) => showError(`Could not load the game: ${error.message}`));
