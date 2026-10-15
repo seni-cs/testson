@@ -27,7 +27,7 @@ const MAX_STAKE_CENTS: i64 = 100;
 /// The highest balance the account without balance may have, in cents: the lowest stake of a slot.
 const MAX_NO_BALANCE_CENTS: i64 = 10;
 /// The highest number a script may type, which keeps the loss limit of the gaming session low.
-const MAX_TYPED_NUMBER: f64 = 5.0;
+const MAX_TYPED_NUMBER: f64 = 10.0;
 /// The longest a step may wait or probe.
 const MAX_TIMEOUT_MS: u64 = 120_000;
 /// How long a probe keeps trying when its step sets no `timeout_ms`.
@@ -1307,7 +1307,7 @@ mod tests {
                 "/steps/1/commands",
                 json!([["click", "getByText('Modo demo')"]]),
             ),
-            ("/steps/1/commands", json!([["fill", "#loss-limit", "10"]])),
+            ("/steps/1/commands", json!([["fill", "#loss-limit", "11"]])),
             ("/steps/1/commands", json!([["press", "Space"]])),
             ("/steps/1/commands", json!([["keydown", "Space"]])),
             ("/steps/1/commands", json!([["--json", "click", "#x"]])),
