@@ -9,6 +9,9 @@
 
 # Session and auth material, should any end up outside data-dir
 session-*.txt
+session-*.json
+credentials-*.env
+browser-*/
 .env
 .env.*
 auth.json

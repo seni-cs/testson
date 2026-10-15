@@ -2,6 +2,7 @@ mod catalog;
 mod db;
 mod events;
 mod harness;
+mod login;
 mod prompt;
 mod report;
 mod router;
@@ -19,6 +20,7 @@ use tokio::net::TcpListener;
 
 use crate::catalog::{DEFAULT_CASINO_URL, Http, fetch_provider_games, find_game};
 use crate::harness::{Agent, Harness};
+use crate::login::Browser;
 use crate::prompt::{parse_betsson_url, slugify};
 use crate::run::Mode;
 use crate::watch::{WatchLock, parse_interval};
@@ -84,6 +86,29 @@ enum Command {
         #[command(flatten)]
         agent: AgentArgs,
     },
+    /// Log in to the account of each mode in Google Chrome, and save its session for the tests
+    Login {
+        /// Log in to the account of this mode only. Both by default.
+        #[arg(long, value_enum)]
+        mode: Option<Mode>,
+
+        /// Page the agent logs in on. Must be https on a betsson host.
+        #[arg(long, default_value = DEFAULT_CASINO_URL, value_parser = parse_betsson_url)]
+        url: String,
+
+        /// Attach to a browser already running with remote debugging, such as
+        /// `http://127.0.0.1:9222`, instead of starting Chrome. It must not be logged in to the
+        /// account of the other mode.
+        #[arg(long, value_name = "URL", requires = "mode", conflicts_with = "chrome")]
+        cdp: Option<String>,
+
+        /// Path of the Chrome program to start. Found in the usual places by default.
+        #[arg(long, env = "TESTSON_CHROME", value_name = "PATH")]
+        chrome: Option<PathBuf>,
+
+        #[command(flatten)]
+        agent: AgentArgs,
+    },
     /// Store every Pragmatic Play game of the catalogue on the dashboard, without testing it
     Sync,
     /// Check that the harness answers with the chosen model, without running a test
@@ -135,6 +160,21 @@ fn run() -> Result<bool> {
         } => {
             let modes = mode.map_or(Mode::ALL.to_vec(), |mode| vec![mode]);
             test(data_dir, &game, &url, &modes, &agent.agent())
+        }
+        Command::Login {
+            mode,
+            url,
+            cdp,
+            chrome,
+            agent,
+        } => {
+            let agent = agent.agent();
+            let browser = cdp.map_or(Browser::Launch(chrome), Browser::Attach);
+            let mut passed = true;
+            for mode in mode.map_or(Mode::ALL.to_vec(), |mode| vec![mode]) {
+                passed &= login::login(data_dir, mode, &url, &browser, &agent)?;
+            }
+            Ok(passed)
         }
         Command::Sync => {
             db::setup(data_dir)?;

@@ -1,9 +1,12 @@
-//! Prompt filling, session restore, and Betsson URL checks.
+//! Prompt filling, saved sessions, and Betsson URL checks.
 
 use anyhow::{Result, bail};
+use serde_json::Value;
 use url::Url;
 
 pub const TEMPLATE: &str = include_str!("../prompts/test-game.txt");
+/// The prompt of `testson login`, which logs in to one account and leaves the browser open.
+pub const LOGIN_TEMPLATE: &str = include_str!("../prompts/login.txt");
 pub const REPORT_SCHEMA: &str = include_str!("../schema/test-game.schema.json");
 /// The rules and criteria of each mode, put into the template at `{{MODE_INSTRUCTIONS}}`.
 pub const REAL_MONEY_INSTRUCTIONS: &str = include_str!("../prompts/real-money.txt");
@@ -20,7 +23,7 @@ pub struct TemplateValues<'a> {
     /// [`REAL_MONEY_INSTRUCTIONS`] or [`NO_BALANCE_INSTRUCTIONS`].
     pub mode_instructions: &'a str,
     pub betsson_url: &'a str,
-    /// Private run directory: the restore script and whatever the agent works with.
+    /// Private run directory: the saved session and whatever the agent works with.
     pub output_dir: &'a str,
     /// Directory the dashboard serves, where the video and screenshots go.
     pub assets_dir: &'a str,
@@ -35,16 +38,20 @@ pub struct TemplateValues<'a> {
 ///
 /// Fails when the URL is not `https` on a `betsson` host.
 pub fn parse_betsson_url(url: &str) -> Result<String, String> {
-    let valid = Url::parse(url).is_ok_and(|parsed| {
-        let host = parsed.host_str().unwrap_or("").to_lowercase();
-        let labels: Vec<&str> = host.split('.').filter(|label| !label.is_empty()).collect();
-        parsed.scheme() == "https" && labels.len() >= 2 && labels[labels.len() - 2] == "betsson"
-    });
+    let valid =
+        Url::parse(url).is_ok_and(|parsed| parsed.scheme() == "https" && is_betsson(&parsed));
     if valid {
         Ok(url.to_owned())
     } else {
         Err("must be https on a betsson host, for example https://www.betsson.es/casino".into())
     }
+}
+
+/// Whether the registrable label of the host of `url` is `betsson`.
+fn is_betsson(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or("").to_lowercase();
+    let labels: Vec<&str> = host.split('.').filter(|label| !label.is_empty()).collect();
+    labels.len() >= 2 && labels[labels.len() - 2] == "betsson"
 }
 
 /// Builds a filesystem slug of at most 80 characters. An empty name becomes `game`.
@@ -69,46 +76,31 @@ pub fn slugify(name: &str) -> String {
     slug.chars().take(SLUG_LIMIT).collect()
 }
 
-/// Whether a non-comment line still contains a `REPLACE_WITH_` placeholder.
-#[must_use]
-pub fn session_has_placeholder(text: &str) -> bool {
-    text.lines().any(|line| {
-        let trimmed = line.trim_start();
-        let comment = trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#');
-        !comment && line.contains("REPLACE_WITH_")
-    })
-}
+/// The localStorage keys Betsson keeps the login in. Any one of them means a logged-in page.
+const AUTH_KEYS: [&str; 3] = ["session", "authSession", "authReducer"];
 
-/// Builds the `restore-session.js` body from a session file. A missing file is an empty one, and
-/// the script then reports `hasAuth: false`.
-///
-/// Blank lines and `#` comments are dropped. `//` comments stay, because they are valid
-/// JavaScript inside `page.evaluate`.
+/// Whether a Playwright storage state, as `state-save` writes it, holds a Betsson login.
 #[must_use]
-pub fn restore_script(session: &str) -> String {
-    let statements: Vec<&str> = session
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#')
+pub fn session_has_auth(state: &Value) -> bool {
+    state["origins"].as_array().is_some_and(|origins| {
+        origins.iter().any(|origin| {
+            let betsson = origin["origin"]
+                .as_str()
+                .and_then(|text| Url::parse(text).ok())
+                .is_some_and(|url| url.scheme() == "https" && is_betsson(&url));
+            betsson
+                && origin["localStorage"].as_array().is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item["name"]
+                            .as_str()
+                            .is_some_and(|name| AUTH_KEYS.contains(&name))
+                            && item["value"]
+                                .as_str()
+                                .is_some_and(|value| !value.is_empty())
+                    })
+                })
         })
-        .collect();
-    let body = if statements.is_empty() {
-        "/* the session file had no statements */".to_owned()
-    } else {
-        statements.join("\n")
-    };
-    format!(
-        "async (page) => {{\n  \
-         await page.evaluate(() => {{\n\
-         {body}\n  \
-         }});\n  \
-         return await page.evaluate(() => ({{\n    \
-         customerId: localStorage.getItem('customerId'),\n    \
-         hasAuth: !!(localStorage.getItem('session') || localStorage.getItem('authSession') || localStorage.getItem('authReducer'))\n  \
-         }}));\n\
-         }}\n"
-    )
+    })
 }
 
 /// Replaces every `{{PLACEHOLDER}}` in `template` and fails when one is absent.
@@ -131,6 +123,15 @@ pub fn fill_template(template: &str, values: TemplateValues<'_>) -> Result<Strin
         ("DATA_PREFIX", values.data_prefix),
         ("SCHEMA", REPORT_SCHEMA.trim_end_matches('\n')),
     ];
+    fill(template, &pairs)
+}
+
+/// Replaces every `{{KEY}}` of `pairs` in `template` and fails when one is absent.
+///
+/// # Errors
+///
+/// Fails when the template lacks one of the placeholders.
+pub fn fill(template: &str, pairs: &[(&str, &str)]) -> Result<String> {
     let missing: Vec<String> = pairs
         .iter()
         .map(|(key, _)| format!("{{{{{key}}}}}"))
@@ -181,24 +182,39 @@ mod tests {
     }
 
     #[test]
-    fn placeholders_ignore_comments() {
-        let commented =
-            "// REPLACE_WITH_TOKEN\n# REPLACE_WITH_TOKEN\n\nlocalStorage.setItem('a', 'b');\n";
-        assert!(!session_has_placeholder(commented));
-        assert!(session_has_placeholder(
-            "localStorage.setItem('a', 'REPLACE_WITH_SESSION');\n"
-        ));
-    }
-
-    #[test]
-    fn restore_script_keeps_javascript_comments() {
-        let session = "# drop\nlocalStorage.setItem('customerId', '1');\n\n// keep\n";
-        let script = restore_script(session);
-        assert!(script.contains("localStorage.setItem('customerId', '1');"));
-        assert!(script.contains("// keep"));
-        assert!(!script.contains("# drop"));
-        assert!(script.starts_with("async (page) => {\n"));
-        assert!(restore_script("# only\n").contains("no statements"));
+    fn a_session_needs_a_betsson_login() {
+        let state = |origin: &str, name: &str, value: &str| {
+            serde_json::json!({
+                "cookies": [],
+                "origins": [{ "origin": origin, "localStorage": [{ "name": name, "value": value }] }],
+            })
+        };
+        assert!(session_has_auth(&state(
+            "https://www.betsson.es",
+            "authSession",
+            "t"
+        )));
+        assert!(!session_has_auth(&state(
+            "https://www.betsson.es",
+            "authSession",
+            ""
+        )));
+        assert!(!session_has_auth(&state(
+            "https://www.betsson.es",
+            "theme",
+            "dark"
+        )));
+        assert!(!session_has_auth(&state(
+            "https://example.com",
+            "session",
+            "t"
+        )));
+        assert!(!session_has_auth(&state(
+            "http://www.betsson.es",
+            "session",
+            "t"
+        )));
+        assert!(!session_has_auth(&serde_json::json!({ "cookies": [] })));
     }
 
     #[test]

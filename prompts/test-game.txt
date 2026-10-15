@@ -21,7 +21,7 @@ echo "[PROGRESS] <short description of what you are about to do>"
 Use descriptions in this spirit, matching what you are actually doing:
 [PROGRESS] Opening target URL
 [PROGRESS] Starting video and trace
-[PROGRESS] Restoring session from localStorage
+[PROGRESS] Restoring the saved session
 [PROGRESS] Reloading page
 [PROGRESS] Reading account balance
 [PROGRESS] Searching for game
@@ -38,7 +38,7 @@ Hard rules, for every mode:
 - Never use autoplay, quick spin series, "Buy feature", "Comprar bono", "Ante bet", double chance, gamble, or any option that raises the stake above the minimum.
 - Never press the spin control more than the mode allows. A press that the game rejected still counts as a press.
 - Do not invent, refresh, or exfiltrate session tokens. Do not print token values in progress lines or in the report.
-- Do not open, print, or copy the session file or restore-session.js, and do not type the login into the page. Restore it only by running the generated script as step 3 shows.
+- Do not open, print, or copy session.json or any other session file, and do not type the login into the page. Restore it only by loading session.json as step 3 shows.
 - Do not log in through a form, and do not type any credential.
 
 {{MODE_INSTRUCTIONS}}
@@ -46,7 +46,7 @@ Hard rules, for every mode:
 Use status "test_failed" only when the test machinery or the account cannot let the test run (browser will not open, the session is missing or expired, session restore throws, the account is not the one this mode needs, the site blocks the account from playing, or you cannot produce a report). It says nothing about the game.
 
 Session restore:
-The login is not part of this prompt. `testson test` wrote the login of this mode's account to {{OUTPUT_DIR}}/restore-session.js, which stores it in the page. Run that file by its path as step 3 shows. Do not rewrite it.
+The login is not part of this prompt. `testson test` copied the saved login of this mode's account, its cookies and localStorage, to {{OUTPUT_DIR}}/session.json. Load that file by its path as step 3 shows. Do not rewrite it.
 
 Instructions:
 
@@ -62,9 +62,9 @@ Instructions:
    Dismiss cookie consent and age confirmation if they block the lobby (Aceptar, Aceptar todas, Entendido, Soy mayor de 18). Do not dismiss a login wall by typing credentials.
 
 3. Restore the logged-in session, then reload:
-   playwright-cli --session {{SESSION_NAME}} run-code --filename '{{OUTPUT_DIR}}/restore-session.js'
+   playwright-cli --session {{SESSION_NAME}} state-load '{{OUTPUT_DIR}}/session.json'
    playwright-cli --session {{SESSION_NAME}} reload
-   Snapshot again and confirm a logged-in state (user menu, balance, or no login button). If the restore script returns hasAuth false, the page is logged out, or the site shows a login form, the session is missing or expired. Stop with status "test_failed" and say that the session file of this mode must be created or refreshed. Do not try to log in through the form.
+   Snapshot again and confirm a logged-in state (user menu, balance, or no login button). If state-load fails, the page is logged out, or the site shows a login form, the session is missing or expired. Stop with status "test_failed" and say that the session of this mode must be saved again with `testson login`. Do not try to log in through the form.
    Read the account balance the site shows and keep it, as written, for balance_before. Apply the balance check of this mode before opening the game.
 
 4. Find and launch {{GAME_NAME}} in real-money mode:
