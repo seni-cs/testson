@@ -26,8 +26,11 @@ impl WatchLock {
         let path = data_dir.join("watch.lock");
         fs::create_dir_all(data_dir)
             .with_context(|| format!("could not create {}", data_dir.display()))?;
+        // Windows refuses to lock a handle opened for appending alone, so it is also opened for
+        // reading.
         let file = OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(&path)
             .with_context(|| format!("could not open {}", path.display()))?;

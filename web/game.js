@@ -71,10 +71,14 @@ function renderProperties(test) {
     const properties = element("dl", "properties");
     // Tests stored before there were scripts were all run by the agent.
     const runner = test.runner ?? "agent";
-    const ranBy = runner === "script" ? `Script ${test.script_id}` : RUNNER_LABELS.agent;
+    // The mark already names the runner; a script adds which one.
+    const ranBy = [renderRunner(runner)];
+    if (runner === "script" && test.script_id != null) {
+        ranBy.push(` ${test.script_id}`);
+    }
     properties.append(
         renderFact("Resultado", STATUS_LABELS[test.status]),
-        renderFact("Ejecutado por", renderRunner(runner), ranBy),
+        renderFact("Ejecutado por", ...ranBy),
         renderFact("Duración", formatDuration(test.duration_ms)),
     );
     if (test.script_outcome) {
