@@ -122,11 +122,14 @@ pub fn check(
         if run_one(game, mode)? {
             println!("Test finished: {} ({mode})", game.name);
         } else {
-            let attempts = db::failed_attempts(data_dir, &game.id, mode.as_str())?;
-            eprintln!(
-                "Test did not finish: {} ({mode}), attempt {attempts} of {MAX_ATTEMPTS}.",
-                game.name
-            );
+            // An agent that exited with an error may still have reported a verdict, which counts.
+            let note = if db::has_verdict(data_dir, &game.id, mode.as_str())? {
+                "its verdict is kept and not retried".to_owned()
+            } else {
+                let attempts = db::failed_attempts(data_dir, &game.id, mode.as_str())?;
+                format!("attempt {attempts} of {MAX_ATTEMPTS}")
+            };
+            eprintln!("Test did not finish: {} ({mode}), {note}.", game.name);
             failed.push(format!("{} ({mode})", game.name));
         }
     }

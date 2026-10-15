@@ -6,4 +6,4 @@ Mode no_balance: the account has no balance, and the test checks that trying to 
 Expected criteria (all must pass for status "working"):
 1. The game launches in real-money mode, with the empty account balance. If the lobby refuses to open the game and shows a message that the balance is not enough, that also counts: screenshot it and do not press anything else.
 2. Trying to bet shows a clear message that the balance is not enough (such as "Saldo insuficiente", "Fondos insuficientes", or "Insufficient funds"), and no round is played.
-If no message appears, a round is played anyway, the game freezes, or it shows an unrelated error, status is "failing".
+If no message appears, a round is played anyway, the game freezes, or it shows an unrelated error, status is "failing". A block of the account, as described above, is "test_failed", not the refusal of criterion 1.

@@ -229,9 +229,9 @@ data-dir/
 
 | Route                 | Responds with                                                |
 | --------------------- | ------------------------------------------------------------ |
-| `/`                   | The list of the Pragmatic Play games                         |
+| `/`                   | The list of the stored games                                 |
 | `/game/{game_id}`     | The page of a game                                           |
-| `/api/games`          | Every Pragmatic Play game, with its latest test of each mode |
+| `/api/games`          | Every stored game, with its latest test of each mode         |
 | `/api/game/{game_id}` | A game and the summaries of its tests                        |
 | `/api/test/{test_id}` | The JSON document of a test                                  |
 | `/data/assets/...`    | The videos and images in `data-dir/assets/`                  |
