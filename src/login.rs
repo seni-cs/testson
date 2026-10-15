@@ -8,7 +8,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,7 +21,7 @@ use crate::prompt::{LOGIN_TEMPLATE, fill, session_has_auth};
 use crate::router::ASSETS_DIR;
 use crate::run::{
     Mode, RUNS_DIR, absolute, after_echoed_prompt, create_private, create_run_dir,
-    ensure_playwright_cli, last_json_object, set_mode, write_private,
+    ensure_playwright_cli, last_json_object, playwright_cli, set_mode, write_private,
 };
 
 /// How long the agent may take to log in, a person solving a captcha included.
@@ -43,12 +43,25 @@ pub enum Browser {
     Attach(String),
 }
 
-/// Logs in to the account of `mode` and saves its session. Says whether it did.
+/// Checks the tools [`login`] needs and pings the agent, once for every mode it logs in to.
 ///
 /// # Errors
 ///
-/// Fails when a tool or the credentials are missing, the ping fails, the browser cannot be
-/// started or attached to, the agent cannot start, or the session cannot be saved.
+/// Fails when `playwright-cli` or the agent CLI is missing, or the ping fails.
+pub fn ensure_tools(agent: &Agent) -> Result<()> {
+    ensure_playwright_cli()?;
+    agent.ensure_installed()?;
+    println!("Pinging {agent}...");
+    agent.ping()
+}
+
+/// Logs in to the account of `mode` and saves its session. Says whether it did. Call
+/// [`ensure_tools`] first.
+///
+/// # Errors
+///
+/// Fails when the credentials are missing, the browser cannot be started or attached to, the
+/// agent cannot start, or the session cannot be saved.
 pub fn login(
     data_dir: &Path,
     mode: Mode,
@@ -58,10 +71,6 @@ pub fn login(
 ) -> Result<bool> {
     let credentials_path = data_dir.join(mode.credentials_file());
     let (username, password) = read_credentials(&credentials_path)?;
-    ensure_playwright_cli()?;
-    agent.ensure_installed()?;
-    println!("Pinging {agent}...");
-    agent.ping()?;
 
     let stamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
     let dir = create_run_dir(
@@ -103,20 +112,33 @@ pub fn login(
     let attached = playwright_cli(
         &dir,
         &session_name,
+        "attach",
         &[
             &format!("--cdp={endpoint}"),
             &format!("--config={}", absolute(&config)?.display()),
         ],
-        "attach",
     );
     let removed = fs::remove_file(&config);
     attached.context("could not attach playwright-cli to the browser")?;
     removed.with_context(|| format!("could not remove {}", config.display()))?;
 
     let saved = log_in_and_save(data_dir, mode, url, &dir, &session_name, agent);
-    let _ = playwright_cli(&dir, &session_name, &[], "detach");
+    let _ = playwright_cli(&dir, &session_name, "detach", &[]);
     drop(chrome);
+    warn_if_leaked(&dir.join("model.log"), &password);
     saved
+}
+
+/// The prompt forbids reading a filled field, but nothing in playwright-cli enforces it, so this
+/// checks that the password did not reach the agent's transcript.
+fn warn_if_leaked(log_path: &Path, password: &str) {
+    if fs::read_to_string(log_path).is_ok_and(|log| log.contains(password)) {
+        eprintln!(
+            "warning: the password of this account appears in {}, so the model provider received \
+             it. Change the password and delete that file.",
+            log_path.display()
+        );
+    }
 }
 
 /// Runs the agent on the attached browser and, when it logged in, saves the session.
@@ -179,8 +201,8 @@ fn log_in_and_save(
     let state = playwright_cli(
         dir,
         session_name,
-        &[&absolute(&state_path)?.display().to_string()],
         "state-save",
+        &[&absolute(&state_path)?.display().to_string()],
     )
     .and_then(|_| {
         set_mode(&state_path, 0o600);
@@ -258,27 +280,6 @@ fn parse_credentials(text: &str) -> Result<(String, String)> {
         }
         _ => bail!("{USERNAME} and {PASSWORD} must both be set"),
     }
-}
-
-/// Runs `playwright-cli --session <session> <command> <args>` in `dir`, and fails with what it
-/// printed when it fails.
-fn playwright_cli(dir: &Path, session: &str, args: &[&str], command: &str) -> Result<Output> {
-    let program = find_on_path("playwright-cli").unwrap_or_else(|| "playwright-cli".into());
-    let output = Command::new(program)
-        .args(["--session", session, command])
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::null())
-        .output()
-        .context("playwright-cli failed to start")?;
-    if !output.status.success() {
-        bail!(
-            "playwright-cli {command} failed:\n{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(output)
 }
 
 /// Google Chrome where it is usually installed, or on `PATH`.
@@ -364,14 +365,21 @@ impl Chrome {
 impl Drop for Chrome {
     /// Asks Chrome to quit, so it writes its profile out, and kills it if it does not.
     fn drop(&mut self) {
-        #[cfg(unix)]
-        let _ = Command::new("kill")
-            .args(["-TERM", &self.child.id().to_string()])
+        let pid = self.child.id().to_string();
+        // SIGTERM on Unix. On Windows, `taskkill` without `/F` closes Chrome's windows, which
+        // ends it as gracefully as its own close button does.
+        let (program, flag) = if cfg!(windows) {
+            ("taskkill", "/PID")
+        } else {
+            ("kill", "-TERM")
+        };
+        let quit = Command::new(program)
+            .args([flag, &pid])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
         let deadline = Instant::now() + CHROME_TIMEOUT;
-        while cfg!(unix) && Instant::now() < deadline {
+        while quit.is_ok() && Instant::now() < deadline {
             if !matches!(self.child.try_wait(), Ok(None)) {
                 return;
             }
@@ -423,5 +431,7 @@ mod tests {
         assert!(!prompt.contains("{{"));
         assert!(prompt.contains(&format!("fill <ref of the username field> {USERNAME}")));
         assert!(prompt.contains(&format!("fill <ref of the password field> {PASSWORD}")));
+        // Running JavaScript in the page could read the filled password.
+        assert!(prompt.contains("Never run `eval`, `run-code`"));
     }
 }
