@@ -16,8 +16,12 @@ autoplay, bonus buy or deposit. When Betsson asks for the gaming session Spanish
 before a real-money game loads, the agent starts one of 15 minutes with a 1 € loss limit. Test one
 game by name, or `watch` the catalogue and test every Pragmatic Play game in both modes. Every test
 is stored in SQLite, and the dashboard lists the games with the outcome of their latest test in
-each mode and shows every test step by step, with its screenshots, video, console messages, and
-failed requests.
+each mode and shows every test step by step, with its screenshots, video, console messages,
+failed requests, and the postMessages between the lobby and the game.
+
+The agent tests each game once per version of it. While it tests, it writes a replay script: the
+`playwright-cli` commands that worked. testson replays that script itself, without an agent and so
+without model tokens, until the game changes. See [Scripts](#scripts).
 
 ## Install
 
@@ -116,9 +120,12 @@ cargo run -- test "Big Bass Blast"
 cargo run -- test "Big Bass Blast" --mode no-balance
 cargo run -- test "Big Bass Blast" --url "https://www.betsson.es/casino"
 cargo run -- test "Big Bass Blast" --harness codex --model gpt-5.5
+cargo run -- test "Big Bass Blast" --runner agent
 ```
 
-Both modes run, one after the other, unless `--mode` picks one.
+Both modes run, one after the other, unless `--mode` picks one. `--runner` (or `TESTSON_RUNNER`)
+picks what tests the game: `auto`, the default, replays its script and falls back to the agent;
+`agent` always runs the agent; `script` only replays, and fails when there is no script.
 
 The game is looked up by name in the public games catalogue, which gives its identifier, provider
 and image. A game spelt exactly as given wins over one that only differs in case. When the
@@ -126,9 +133,10 @@ catalogue cannot be read or does not have the game, the stored game with that na
 is, and only when there is none is a new one stored, under an identifier made from its name. The
 URL defaults to `https://www.betsson.es/casino` and must be `https` on a `betsson` host.
 
-For each mode, the command prints the status, summary, video, the report, where the Playwright
-trace is and the address of the test on the dashboard. It exits 0 only when every test is
-`working` and the agent CLI exited cleanly.
+For each test it runs, the command prints the runner, status, summary, version, video, the
+report, where the Playwright trace is and the address of the test on the dashboard. It exits 0
+only when, in every mode, the latest test that reached a verdict is `working` and the agent CLI
+exited cleanly.
 
 A run may take 20 minutes. One that takes longer is stopped and stored as `test_failed`. Either
 way, testson then closes the browser the agent opened.
@@ -148,6 +156,46 @@ Every report is validated against the schema. When the agent returns no report, 
 not follow the schema, the test is stored as `test_failed` with the reason, and the model log keeps
 what the agent said.
 
+## Scripts
+
+A script is a JSON document that follows `schema/test-script.schema.json`. It holds the steps that
+are particular to the game: read the balance in the lobby, open the game, fill the gaming session,
+wait for it to load, read the stake, spin, and read or expect what the mode checks. testson opens
+the browser, records the video, captures the postMessages, loads the saved login and collects the
+evidence itself, so the login is never in a script.
+
+The version of a game is the ETag the server of the provider sends with its `build.js`. A script
+belongs to one game, one mode and one version:
+
+1. A game and mode without a script is tested by the agent.
+2. When the agent finds it `working`, the `script.json` it wrote is checked and stored, and
+   replayed at once as a test of its own. In real-money mode that is a second round.
+3. Later tests replay the script. Before the spin, the replay checks that the `build.js` the
+   browser loaded has the ETag of the script, and stops before betting when it does not.
+4. A replay that stops because a step no longer runs, or because the version changed, is stored
+   as `test_failed`. Its script is retired, and the agent tests the game again.
+
+Every test, by the agent or by a script, is stored on its own, with `runner` saying which. A replay
+that ran every step is `working`, or, in real-money mode, `failing` when the balance after the
+round is not the balance before it less the stake plus the win, to the cent. Any other step that
+does not hold, such as a message that does not appear, may be the script as much as the game, so
+the agent tests the game and gives the verdict.
+
+The script was written by a model and runs unattended, so it is checked before every replay:
+
+- Only page commands, such as `click`, `fill`, `mousedown` or `find`, are allowed. `run-code` is
+  not, and an `eval` may only read.
+- It spins once at most, and exactly once with real money, and acts on nothing after the spin.
+  Only the spin may press Space, which spins most games.
+- It reads the balance before doing anything, and the stake before the spin. The replay stops
+  before betting when the stake is not between 0 and 1 €, or is above the balance, or when the
+  account is not the one of the mode.
+- It navigates only to Betsson, types no number above 5, and names no cashier, deposit, demo,
+  bonus or buy control.
+
+The game page shows who ran each test, IA or Script, the version it saw, and a history of the
+game: its first test, its new versions, the scripts created and retired, and its status changes.
+
 ## Watch the Pragmatic Play games
 
 `watch` reads the games whose provider is `PragmaticPlay` from the public games API, about 300 of
@@ -164,10 +212,16 @@ cargo run -- watch --every 30m --harness codex --model gpt-5.5
 To put every game on the dashboard without testing any, run `cargo run -- sync`.
 
 Every check adds the games to the dashboard and runs the same tests as `test` for each game and
-mode that has no `working` or `failing` test yet. A test that ends in `test_failed` is tried again
-at the next check, up to three attempts in that mode; after that the watch leaves it alone, and you
-can test it by hand with `testson test`. A test that cannot start, such as with a saved session
-that is not valid JSON or a tool missing, stops the check without counting an attempt. A game
+mode that has no `working` or `failing` test yet for the current version of the game. The version
+is read with a HEAD request for the `build.js` the latest test of the game loaded, without a
+browser, and each test records the version read this way before it ran. A game is tested again
+only when its ETag changed: its script finds the new version before betting and hands over to the
+agent, which leaves a script for it. A game whose version cannot be read keeps its verdict. A test
+that ends in `test_failed` is tried again at the next check, up to three attempts in that mode and
+version; a replay that hands over to the agent is not an attempt. After that the watch leaves it
+alone, and you can test it by hand with `testson test`. A test that cannot start, such as with a
+saved session that is not valid JSON or a tool missing, stops the check without counting an
+attempt. A game
 that leaves the catalogue stays on the dashboard. The first check tests every game in both modes,
 which spends one minimum stake per game on the real-money account. Run `test` to test a game
 again.
@@ -207,7 +261,8 @@ Adding another agent CLI is one `Harness` variant in `src/harness.rs`, plus its 
 | `src/db.rs`                    | The migrations and every query, grouped by table                |
 | `src/catalog.rs`               | The public games catalogue and the games of Pragmatic Play      |
 | `src/watch.rs`                 | The watch over those games and its lock                         |
-| `src/run.rs`                   | One test in one mode: its run, the agent and the stored test    |
+| `src/run.rs`                   | One test in one mode: the agent or the replay, and the fallback |
+| `src/script.rs`                | The rules of a replay script and the replay that runs one       |
 | `src/login.rs`                 | The login in Chrome over its DevTools port, and the saved state |
 | `src/report.rs`                | The validation of a report against the schema                   |
 | `src/harness.rs`               | The agent CLIs, model selection and the ping                    |
@@ -219,10 +274,15 @@ Adding another agent CLI is one `Harness` variant in `src/harness.rs`, plus its 
 | `prompts/no-balance.txt`       |                                                                 |
 | `migrations/`                  | The SQL migrations, compiled into the binary                    |
 | `schema/test-game.schema.json` | The JSON Schema of a test, also compiled into the prompt        |
+| `schema/test-script.schema.json` | The JSON Schema of a replay script, also in the prompt        |
+| `prompts/capture-messages.js`  | Captures the postMessages of the page; the agent and the replay run it |
+| `prompts/collect-messages.js`  | Reads them back, with tokens redacted                           |
+| `clippy.toml`                  | Lets the docs write ETag as the header writes it                |
 | `web/`                         | The pages: plain HTML, CSS and JavaScript, compiled in as is    |
 
 A test is stored whole as a JSON document that follows the schema. The few fields the lists need,
-its mode, its status and when it started, are columns SQLite generates from the document. Tests
+its mode, runner, status, version and when it started, are columns SQLite generates from the
+document. Tests stored before version 3 of the schema were run by the agent. Tests
 stored before the modes, with version 1 of the schema, were played in demo mode and show as Demo. A
 game goes by the text identifier the catalogue gives it, such as `nyxAviator`, and a test by a
 number.
@@ -231,14 +291,15 @@ The data directory holds:
 
 ```text
 data-dir/
-  testson.db                  games and tests
+  testson.db                  games, tests and scripts
   credentials-<mode>.env      the username and password of the account, never served
   session-<mode>.json         the saved login of the account, never served
   browser-<mode>/             the Chrome profile `login` uses, never served
   watch.lock
   runs/login-<mode>-<time>/     private: prompt.filled.txt, model.log
-  runs/<game>-<mode>-<time>/    private: prompt.filled.txt, session.json, model.log,
-                                report.json, .playwright-cli/traces/
+  runs/<game>-<mode>-<time>/    private: prompt.filled.txt, session.json, the two postMessage
+                                scripts, model.log, script.json, report.json,
+                                .playwright-cli/traces/
   assets/<game>-<mode>-<time>/  served at /data/assets/: session.webm, screenshots/
 ```
 
@@ -247,6 +308,6 @@ data-dir/
 | `/`                   | The list of the stored games                                 |
 | `/game/{game_id}`     | The page of a game                                           |
 | `/api/games`          | Every stored game, with its latest test of each mode         |
-| `/api/game/{game_id}` | A game and the summaries of its tests                        |
+| `/api/game/{game_id}` | A game and the summaries of its tests and scripts            |
 | `/api/test/{test_id}` | The JSON document of a test                                  |
 | `/data/assets/...`    | The videos and images in `data-dir/assets/`                  |

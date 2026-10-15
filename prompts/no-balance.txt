@@ -7,3 +7,5 @@ Expected criteria (all must pass for status "working"):
 1. The game launches in real-money mode, with the empty account balance. If the lobby refuses to open the game and shows a message that the balance is not enough, that also counts: screenshot it and do not press anything else.
 2. Trying to bet shows a clear message that the balance is not enough (such as "Saldo insuficiente", "Fondos insuficientes", or "Insufficient funds"), and no round is played.
 If no message appears, a round is played anyway, the game freezes, or it shows an unrelated error, status is "failing". A block of the account, as described above, is "test_failed", not the refusal of criterion 1.
+
+Replay script (no_balance): it reads balance_before in the lobby before anything else, and ends with an "expect" whose "matches" holds on the message that the balance is not enough, read from the page, a postMessage or a response. If the lobby refused to open the game, the script has no spin and expects the lobby's message instead. If it spins, it reads the stake before the spin.

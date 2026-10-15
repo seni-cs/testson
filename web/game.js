@@ -1,5 +1,23 @@
 const CONSOLE_LEVELS = { error: "Error", warning: "Aviso" };
 
+// Which window of the page received a postMessage.
+const DIRECTIONS = { to_lobby: "Al lobby", to_frame: "Al juego" };
+
+// How far a replay of a script got.
+const SCRIPT_OUTCOMES = {
+    completed: "Completo",
+    step_failed: "Un paso del script falló",
+    version_changed: "Nueva versión del juego",
+    blocked: "Bloqueado por la cuenta o la apuesta",
+};
+
+// Why a script stopped being replayed.
+const RETIRED_REASONS = {
+    version_changed: "el juego cambió de versión",
+    step_failed: "un paso dejó de funcionar",
+    replaced: "la IA dejó uno nuevo",
+};
+
 function formatDateTime(timestamp) {
     return new Date(timestamp).toLocaleString(LOCALE, { dateStyle: "medium", timeStyle: "short" });
 }
@@ -51,10 +69,22 @@ function renderError(error) {
 
 function renderProperties(test) {
     const properties = element("dl", "properties");
+    // Tests stored before there were scripts were all run by the agent.
+    const runner = test.runner ?? "agent";
+    const ranBy = runner === "script" ? `Script ${test.script_id}` : RUNNER_LABELS.agent;
     properties.append(
         renderFact("Resultado", STATUS_LABELS[test.status]),
+        renderFact("Ejecutado por", renderRunner(runner), ranBy),
         renderFact("Duración", formatDuration(test.duration_ms)),
     );
+    if (test.script_outcome) {
+        properties.append(renderFact("Script", SCRIPT_OUTCOMES[test.script_outcome]));
+    }
+    if (test.game_version) {
+        const version = element("code", "", shortVersion(test.game_version.etag));
+        version.title = `${test.game_version.build_url} · ${test.game_version.etag}`;
+        properties.append(renderFact("Versión", version));
+    }
 
     const { browser, viewport } = test.environment ?? {};
     if (browser) {
@@ -172,6 +202,17 @@ function renderFailedRequests(requests) {
     return renderLog("Peticiones fallidas", [count], rows);
 }
 
+function renderPostMessages(messages) {
+    const rows = messages.map((message) => {
+        const badge = element("span", "badge", DIRECTIONS[message.direction]);
+        const time = new Date(message.at).toLocaleTimeString(LOCALE);
+        const source = [time, message.origin].filter(Boolean).join(" · ");
+        return renderLogRow(badge, JSON.stringify(message.data), source);
+    });
+    const count = element("span", "badge", messages.length);
+    return renderLog("Mensajes postMessage", [count], rows);
+}
+
 function renderStep(step) {
     const item = element("li", `step ${step.status}`);
     const heading = element("p", "step-heading");
@@ -216,12 +257,17 @@ function renderDocument(title, test) {
     const timeline = element("ol", "timeline");
     timeline.append(...test.steps.map(renderStep));
 
-    if (!test.error) {
-        return [overview, timeline];
+    const content = [overview];
+    if (test.error) {
+        const failure = renderError(test.error);
+        failure.classList.add(test.status);
+        content.push(failure);
     }
-    const failure = renderError(test.error);
-    failure.classList.add(test.status);
-    return [overview, failure, timeline];
+    if (test.post_messages?.length) {
+        content.push(renderPostMessages(test.post_messages));
+    }
+    content.push(timeline);
+    return content;
 }
 
 // Build what a test shows under its `title`: its stored document or, failing that, why it is not
@@ -284,6 +330,7 @@ function renderTestLink(test) {
     link.href = testHash(test);
     link.append(
         element("span", "", MODE_LABELS[test.mode]),
+        renderRunner(test.runner),
         element("span", "when", formatShortDateTime(test.started_at)),
         renderLabelledDot(test.status),
     );
@@ -344,6 +391,66 @@ function renderBanner(game) {
     return [renderCover(game.image_url), about];
 }
 
+// What happened to a game, newest first: who tested it, the versions it went through, the
+// scripts its agent tests left and what became of them, and the changes of its status.
+function historyEvents(game) {
+    const events = [];
+    const add = (at, mode, text, testId) => events.push({ at, mode, text, testId });
+    for (const mode of MODES) {
+        // Tests come newest first; their history is told from the oldest.
+        const tests = game.tests.filter((test) => test.mode === mode).reverse();
+        let version = null;
+        let verdict = null;
+        tests.forEach((test, index) => {
+            if (index === 0) {
+                add(test.started_at, mode, `Primer test, con ${RUNNER_LABELS[test.runner]}`, test.id);
+            }
+            if (test.etag && version && test.etag !== version) {
+                const change = `${shortVersion(version)} → ${shortVersion(test.etag)}`;
+                add(test.started_at, mode, `Nueva versión del juego: ${change}`, test.id);
+            }
+            version = test.etag ?? version;
+            if (test.script_outcome && test.script_outcome !== "completed") {
+                const next = test.script_outcome === "blocked" ? "" : ", se prueba con IA";
+                const text = `Script ${test.script_id}: ${SCRIPT_OUTCOMES[test.script_outcome]}${next}`;
+                add(test.started_at, mode, text, test.id);
+            }
+            if (test.status === "working" || test.status === "failing") {
+                if (verdict && verdict !== test.status) {
+                    const change = `${STATUS_LABELS[verdict]} → ${STATUS_LABELS[test.status]}`;
+                    add(test.started_at, mode, `Estado: ${change}`, test.id);
+                }
+                verdict = test.status;
+            }
+        });
+    }
+    for (const script of game.scripts) {
+        const created = `Script ${script.id} creado por la IA, versión ${shortVersion(script.etag)}`;
+        add(script.created_at, script.mode, created, script.created_by_test);
+        if (script.retired_at) {
+            const why = RETIRED_REASONS[script.retired_reason];
+            add(script.retired_at, script.mode, `Script ${script.id} retirado: ${why}`, null);
+        }
+    }
+    return events.sort((a, b) => b.at.localeCompare(a.at));
+}
+
+function renderHistory(game) {
+    return historyEvents(game).map((event) => {
+        const text = element(event.testId ? "a" : "span", "", event.text);
+        if (event.testId) {
+            text.href = `#test-${event.testId}`;
+        }
+        const item = element("li");
+        item.append(
+            element("span", "when", formatShortDateTime(event.at)),
+            element("span", "mode", MODE_LABELS[event.mode]),
+            text,
+        );
+        return item;
+    });
+}
+
 async function showGame() {
     const gameId = location.pathname.split("/").pop();
     const game = await fetchJson(`/api/game/${gameId}`);
@@ -366,6 +473,8 @@ async function showGame() {
     document.getElementById("count").textContent = links.length;
     document.getElementById("tests").append(...links);
     document.getElementById("sidebar").hidden = false;
+    document.getElementById("events").append(...renderHistory(game));
+    document.getElementById("history").hidden = false;
     window.addEventListener("hashchange", () => showSelectedTest(game.tests));
     showSelectedTest(game.tests);
 }

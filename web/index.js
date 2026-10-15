@@ -27,7 +27,11 @@ function renderGame(game) {
             const latest = game[mode];
             const status = latest?.status ?? "untested";
             const tested = latest ? formatDay(latest.started_at) : "Nunca";
-            return renderFact(MODE_LABELS[mode], renderLabelledDot(status), tested);
+            const value = [renderLabelledDot(status), tested];
+            if (latest) {
+                value.push(renderRunner(latest.runner));
+            }
+            return renderFact(MODE_LABELS[mode], ...value);
         }),
     );
     const about = element("div", "about");

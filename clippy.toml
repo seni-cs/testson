@@ -1,0 +1,2 @@
+# "ETag" is the name of an HTTP header, written as the header writes it.
+doc-valid-idents = ["ETag", ".."]

@@ -7,6 +7,7 @@ mod prompt;
 mod report;
 mod router;
 mod run;
+mod script;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -22,7 +23,7 @@ use crate::catalog::{DEFAULT_CASINO_URL, Http, fetch_provider_games, find_game};
 use crate::harness::{Agent, Harness};
 use crate::login::Browser;
 use crate::prompt::{parse_betsson_url, slugify};
-use crate::run::Mode;
+use crate::run::{Mode, Runner};
 use crate::watch::{WatchLock, parse_interval};
 
 const ADDRESS: &str = "127.0.0.1:8000";
@@ -59,6 +60,14 @@ struct AgentArgs {
     effort: Option<String>,
 }
 
+#[derive(Args)]
+struct RunnerArgs {
+    /// What tests a game: the script an agent run left for its current version, falling back
+    /// to the agent (auto), always the agent, or only the script.
+    #[arg(long, env = "TESTSON_RUNNER", value_enum, default_value_t = Runner::Auto)]
+    runner: Runner,
+}
+
 impl AgentArgs {
     fn agent(self) -> Agent {
         Agent::new(self.harness, self.model, self.effort)
@@ -82,6 +91,9 @@ enum Command {
         /// Run only the test of this mode. Both run by default.
         #[arg(long, value_enum)]
         mode: Option<Mode>,
+
+        #[command(flatten)]
+        runner: RunnerArgs,
 
         #[command(flatten)]
         agent: AgentArgs,
@@ -128,6 +140,9 @@ enum Command {
         every: Option<Duration>,
 
         #[command(flatten)]
+        runner: RunnerArgs,
+
+        #[command(flatten)]
         agent: AgentArgs,
     },
 }
@@ -157,10 +172,11 @@ fn run() -> Result<bool> {
             game,
             url,
             mode,
+            runner,
             agent,
         } => {
             let modes = mode.map_or(Mode::ALL.to_vec(), |mode| vec![mode]);
-            test(data_dir, &game, &url, &modes, &agent.agent())
+            test(data_dir, &game, &url, &modes, &agent.agent(), runner.runner)
         }
         Command::Login {
             mode,
@@ -205,16 +221,22 @@ fn run() -> Result<bool> {
             }
             Ok(true)
         }
-        Command::Watch { every, agent, .. } => {
+        Command::Watch {
+            every,
+            runner,
+            agent,
+            ..
+        } => {
+            let runner = runner.runner;
             let agent = agent.agent();
             db::setup(data_dir)?;
             let _lock = WatchLock::acquire(data_dir)?;
             let Some(every) = every else {
-                check(data_dir, &agent)?;
+                check(data_dir, &agent, runner)?;
                 return Ok(true);
             };
             loop {
-                if let Err(error) = check(data_dir, &agent) {
+                if let Err(error) = check(data_dir, &agent, runner) {
                     eprintln!("error: {error:#}");
                 }
                 println!("Next check in {}s", every.as_secs());
@@ -242,7 +264,14 @@ async fn serve(data_dir: &Path) -> Result<()> {
 /// catalogue cannot be read or has no game by that name, the stored game with that name is tested
 /// as it is, and only when there is none either is a new one stored, under an identifier made from
 /// the name.
-fn test(data_dir: &Path, name: &str, url: &str, modes: &[Mode], agent: &Agent) -> Result<bool> {
+fn test(
+    data_dir: &Path,
+    name: &str,
+    url: &str,
+    modes: &[Mode],
+    agent: &Agent,
+    runner: Runner,
+) -> Result<bool> {
     db::setup(data_dir)?;
     let game = match find_game(&Http, name) {
         Ok(Some(game)) => {
@@ -274,14 +303,23 @@ fn test(data_dir: &Path, name: &str, url: &str, modes: &[Mode], agent: &Agent) -
     };
     let mut passed = true;
     for &mode in modes {
-        passed &= run::test_game(data_dir, &game, url, mode, agent)?.passed();
+        passed &= run::test_game(data_dir, &Http, &game, url, mode, agent, runner)?.passed();
     }
     Ok(passed)
 }
 
-fn check(data_dir: &Path, agent: &Agent) -> Result<()> {
+fn check(data_dir: &Path, agent: &Agent, runner: Runner) -> Result<()> {
     watch::check(data_dir, &Http, |game, mode| {
-        Ok(run::test_game(data_dir, game, DEFAULT_CASINO_URL, mode, agent)?.finished())
+        let tested = run::test_game(
+            data_dir,
+            &Http,
+            game,
+            DEFAULT_CASINO_URL,
+            mode,
+            agent,
+            runner,
+        )?;
+        Ok(tested.finished())
     })
 }
 

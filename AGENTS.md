@@ -4,7 +4,8 @@ testson tests every Pragmatic Play game of the Betsson casino with two test acco
 balance that plays a real-money round and one without balance that must be told it cannot bet, with
 an AI coding agent that drives `playwright-cli`, and shows the results on a dashboard: a CLI that
 runs the agent and writes to SQLite, an axum server that reads it, and pages in plain HTML, CSS and
-JavaScript. See `README.md` for the layout and the routes.
+JavaScript. The agent tests each version of a game once and leaves a replay script, which testson
+runs without an agent until the version, the ETag of the game's `build.js`, changes. See `README.md` for the layout and the routes.
 
 ## Checks
 
@@ -23,6 +24,10 @@ the binary, so restart it after each edit to them.
 
 - The server only reads. The `test` and `watch` commands write games and tests, straight through
   `src/db.rs`, and can run beside it.
+- A replay script follows `schema/test-script.schema.json`, which is also compiled into the prompt
+  and mirrored by the types and the rules in `src/script.rs`; change them together, as for a test.
+  `script::validate` checks the safety rules below before every replay, because the script was
+  written by a model and runs unattended. Loosen them only with the same care as the prompts.
 - A test is one JSON document that follows `schema/test-game.schema.json`. The `status` and
   `started_at` columns of `tests` are generated from it, so the document is the only place they
   are written. A change to the shape of the document starts in the schema. The schema is also
@@ -55,7 +60,9 @@ the binary, so restart it after each edit to them.
   spin once per test at the minimum stake, never above 1 €. The no-balance test never bets on an
   account with balance. The only limit it sets is the gaming session Spanish rules require before
   a real-money game loads: 15 minutes and a 1 € loss limit. Changes to the prompts must keep these
-  rules.
+  rules, and so must changes to `src/script.rs`: a replay spins once at most, after reading a stake
+  it checks is at most 1 €, acts on nothing after the spin, stops before betting when the version
+  of the game changed, and never runs `run-code` from a script.
 
 ## Conventions
 

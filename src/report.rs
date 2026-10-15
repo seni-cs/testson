@@ -9,7 +9,7 @@
 
 use anyhow::{Result, bail, ensure};
 use chrono::DateTime;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Deserialize)]
@@ -17,6 +17,9 @@ use serde_json::Value;
 struct Report {
     schema_version: u64,
     mode: Mode,
+    runner: Runner,
+    script_id: Option<u64>,
+    script_outcome: Option<ScriptOutcome>,
     status: Status,
     summary: String,
     game_url: Option<String>,
@@ -26,6 +29,9 @@ struct Report {
     balance_after: Option<String>,
     video_path: Option<String>,
     trace_path: Option<String>,
+    game_version: Option<GameVersion>,
+    #[serde(default)]
+    post_messages: Vec<PostMessage>,
     steps: Vec<Step>,
     error: Option<Error>,
     environment: Option<Environment>,
@@ -36,6 +42,47 @@ struct Report {
 enum Mode {
     RealMoney,
     NoBalance,
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum Runner {
+    Agent,
+    Script,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ScriptOutcome {
+    Completed,
+    StepFailed,
+    VersionChanged,
+    Blocked,
+}
+
+/// Which build of a game client was loaded, by the ETag of its build.js.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GameVersion {
+    pub build_url: String,
+    pub etag: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PostMessage {
+    at: String,
+    direction: Direction,
+    origin: Option<String>,
+    frame_url: Option<String>,
+    data: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Direction {
+    ToLobby,
+    ToFrame,
 }
 
 #[derive(Deserialize, PartialEq, Eq)]
@@ -139,7 +186,21 @@ struct Viewport {
 /// Fails, naming the field, at the first place where it does not.
 pub fn validate(report: &Value) -> Result<()> {
     let report = Report::deserialize(report)?;
-    ensure!(report.schema_version == 2, "schema_version must be 2");
+    ensure!(report.schema_version == 3, "schema_version must be 3");
+    match (&report.runner, report.script_id, &report.script_outcome) {
+        (Runner::Script, Some(id), Some(_)) => ensure!(id >= 1, "script_id must be at least 1"),
+        (Runner::Script, _, _) => bail!("a script run needs a script_id and a script_outcome"),
+        (Runner::Agent, None, None) => {}
+        (Runner::Agent, _, _) => {
+            bail!("only a script run may have a script_id or a script_outcome")
+        }
+    }
+    if let Some(version) = &report.game_version {
+        check_version(version)?;
+    }
+    for message in &report.post_messages {
+        check_message(message)?;
+    }
     non_empty("summary", &report.summary)?;
     date_time("started_at", &report.started_at)?;
     for (name, value) in [
@@ -171,6 +232,32 @@ pub fn validate(report: &Value) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Checks one postMessage, as the replay reads them from the page.
+///
+/// # Errors
+///
+/// Fails when it does not have the shape the schema gives a post message.
+pub fn check_post_message(message: &Value) -> Result<()> {
+    check_message(&PostMessage::deserialize(message)?)
+}
+
+fn check_message(message: &PostMessage) -> Result<()> {
+    date_time("post message at", &message.at)
+}
+
+/// Checks the version of a game, as a test or a script records it.
+///
+/// # Errors
+///
+/// Fails when the URL is not an absolute URL or the ETag is empty.
+pub fn check_version(version: &GameVersion) -> Result<()> {
+    ensure!(
+        url::Url::parse(&version.build_url).is_ok(),
+        "game_version.build_url is not a URL"
+    );
+    non_empty("game_version.etag", &version.etag)
 }
 
 fn check_step(step: &Step) -> Result<()> {
@@ -224,8 +311,9 @@ mod tests {
 
     fn report() -> Value {
         json!({
-            "schema_version": 2,
+            "schema_version": 3,
             "mode": "no_balance",
+            "runner": "agent",
             "status": "failing",
             "summary": "No insufficient-balance message.",
             "game_url": "https://www.betsson.es/casino",
@@ -234,6 +322,8 @@ mod tests {
             "balance_before": "0,00 €",
             "balance_after": "0,00 €",
             "video_path": "/data/assets/x/session.webm",
+            "game_version": { "build_url": "https://x/gs2c/build.js", "etag": "\"abc\"" },
+            "post_messages": [{ "at": "2026-10-12T10:00:01Z", "direction": "to_lobby", "origin": "https://x", "data": { "event": "loaded" } }],
             "steps": [{
                 "action": "click",
                 "description": "Pressed spin once",
@@ -259,7 +349,14 @@ mod tests {
     #[test]
     fn rejects_what_the_schema_does_not_allow() {
         for (pointer, value) in [
-            ("/schema_version", json!(1)),
+            ("/schema_version", json!(2)),
+            ("/runner", Value::Null),
+            ("/runner", json!("human")),
+            ("/script_id", json!(1)),
+            ("/game_version/etag", json!("")),
+            ("/game_version/build_url", json!("build.js")),
+            ("/post_messages/0/direction", json!("sideways")),
+            ("/post_messages/0/at", json!("now")),
             ("/mode", json!("demo")),
             ("/mode", Value::Null),
             ("/balance_before", json!("")),
@@ -291,6 +388,19 @@ mod tests {
                 "{pointer} = {value} was accepted"
             );
         }
+    }
+
+    #[test]
+    fn a_script_run_names_its_script_and_outcome() {
+        let mut script = report();
+        script["runner"] = json!("script");
+        assert!(validate(&script).is_err());
+        script["script_id"] = json!(4);
+        assert!(validate(&script).is_err());
+        script["script_outcome"] = json!("completed");
+        validate(&script).unwrap();
+        script["script_outcome"] = json!("lost");
+        assert!(validate(&script).is_err());
     }
 
     #[test]
