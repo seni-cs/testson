@@ -185,7 +185,3 @@ data-dir/
 | `/api/test/{test_id}` | The JSON document of a test           |
 | `/data/assets/...`    | The files in `data-dir/assets/`       |
 
-## Lint
-
-`./lint.sh` runs rustfmt, [Clippy](https://doc.rust-lang.org/clippy/) with the pedantic group
-denied, the tests, ShellCheck, and markdownlint. It needs `cargo`, `shellcheck`, and `npx`.
