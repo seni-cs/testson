@@ -339,8 +339,13 @@ function renderTestLink(test) {
     link.href = testHash(test);
     const runner = test.runner ?? "agent";
     link.ariaLabel = `${MODE_LABELS[test.mode]} · ${formatDateTime(test.started_at)} · ${STATUS_LABELS[test.status]} · ${RUNNER_LABELS[runner]} · Test ${test.id}`;
-    const label = element("span", "test-mode-label", MODE_LABELS[test.mode]);
-    label.append(renderRunner(runner));
+    // The time tells apart the tests of a mode on the same day.
+    const time = element("time", "when", formatTestTime(test.started_at));
+    time.dateTime = test.started_at;
+    const meta = element("span", "test-meta");
+    meta.append(renderRunner(runner), time);
+    const label = element("span", "test-mode-label");
+    label.append(element("span", "test-mode-name", MODE_LABELS[test.mode]), meta);
     link.append(renderLabelledDot(test.status), label);
     return link;
 }
@@ -363,10 +368,7 @@ function renderTestGroups(tests) {
     return Array.from(days.values(), (day) => {
         const group = element("section", "test-day");
         const heading = element("h3", "test-day-heading", formatDay(day[0].started_at));
-        const earliest = day[day.length - 1].started_at;
-        const time = element("time", "when", formatTestTime(earliest));
-        time.dateTime = earliest;
-        heading.append(time);
+        heading.append(element("span", "when", `${day.length} ${day.length === 1 ? "test" : "tests"}`));
         const columns = element("div", "test-modes");
         // Preserve reports from before the two account modes as their own column.
         const modes = day.some((test) => test.mode !== "demo") ? [...MODES] : [];
@@ -378,7 +380,10 @@ function renderTestGroups(tests) {
             if (!matching.length) {
                 continue;
             }
+            // The columns are read one after the other, so each says which mode it holds.
             const column = element("div", `test-mode ${mode}`);
+            column.role = "group";
+            column.ariaLabel = MODE_LABELS[mode];
             const list = element("div", "test-mode-list");
             list.append(...matching.map(renderTestLink));
             column.append(list);
