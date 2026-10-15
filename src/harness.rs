@@ -65,7 +65,7 @@ impl Harness {
 
     fn default_model(self) -> Option<&'static str> {
         match self {
-            Self::Claude => Some("haiku"),
+            Self::Claude => Some("sonnet"),
             Self::Codex | Self::Grok => None,
         }
     }
@@ -512,9 +512,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_defaults_to_haiku_with_medium_effort() {
+    fn claude_defaults_to_sonnet_with_medium_effort() {
         let agent = Agent::new(Harness::Claude, None, None);
-        assert_eq!(agent.to_string(), "claude (model haiku, effort medium)");
+        assert_eq!(agent.to_string(), "claude (model sonnet, effort medium)");
         assert_eq!(
             args(&agent, true),
             [
@@ -525,7 +525,7 @@ mod tests {
                 "stream-json",
                 "--verbose",
                 "--model",
-                "haiku",
+                "sonnet",
                 "--effort",
                 "medium",
             ]

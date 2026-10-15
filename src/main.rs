@@ -50,7 +50,7 @@ struct AgentArgs {
     #[arg(long, env = "TESTSON_HARNESS", value_enum, default_value_t = Harness::Claude)]
     harness: Harness,
 
-    /// Model passed to the harness. Defaults to haiku for claude and to the CLI's own default
+    /// Model passed to the harness. Defaults to sonnet for claude and to the CLI's own default
     /// for the others.
     #[arg(long, env = "TESTSON_MODEL")]
     model: Option<String>,
