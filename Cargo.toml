@@ -17,6 +17,8 @@ anyhow = "1.0.104"
 axum = "0.8.9"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6.7", features = ["derive", "env"] }
+ctrlc = { version = "3.5.2", features = ["termination"] }
+jsonschema = { version = "0.58.6", default-features = false }
 regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -26,3 +28,10 @@ tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net"] }
 tower-http = { version = "0.7.1", features = ["fs", "set-header"] }
 ureq = "3.3.0"
 url = "2.5.8"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", default-features = false, features = ["signal"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tower = { version = "0.5.3", features = ["util"] }
