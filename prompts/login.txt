@@ -18,6 +18,7 @@ Hard rules:
     playwright-cli --session {{SESSION_NAME}} fill <ref of the username field> BETSSON_USERNAME
     playwright-cli --session {{SESSION_NAME}} fill <ref of the password field> BETSSON_PASSWORD
   Snapshots show a filled field as <secret>NAME</secret>. Never try to read, print, or reveal the values, never type them any other way, and never type any other credential.
+- Never run `eval`, `run-code`, `console`, `network`, or any other command that runs JavaScript in the page or reads its requests: they can read a filled field. Use only `goto`, `snapshot`, `find`, `click`, `fill`, `check`, `select`, `press`, `reload`, `go-back`, `dialog-accept`, `dialog-dismiss`, `tab-list`, and `tab-select`.
 - Do not open a game, and do not click "Depositar", "Ingresar", "Retirar", or any cashier, payment, bonus, promotion, inbox, limits, or account-settings control. If one of them opens, close it without filling anything.
 - Do not register an account, do not use "¿Has olvidado tu contraseña?" or any other recovery flow, and do not log out.
 - Do not accept a change of password, email, or phone number the site asks for. Stop with status "failed" and quote the request.

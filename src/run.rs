@@ -3,7 +3,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -387,14 +387,32 @@ fn test_failed(prepared: &Prepared, started_at: DateTime<Utc>, duration: u64, wh
 /// Closes the browser the agent opened, which it may have left open when it failed or was
 /// stopped.
 fn close_browser(prepared: &Prepared) {
+    let _ = playwright_cli(&prepared.dir, &prepared.session_name, "close", &[]);
+}
+
+/// Runs `playwright-cli --session <session> <command> <args>` in `dir`, and fails with what it
+/// printed when it fails.
+///
+/// # Errors
+///
+/// Fails when `playwright-cli` cannot start or exits with an error.
+pub fn playwright_cli(dir: &Path, session: &str, command: &str, args: &[&str]) -> Result<Output> {
     let program = find_on_path("playwright-cli").unwrap_or_else(|| "playwright-cli".into());
-    let _ = Command::new(program)
-        .args(["--session", &prepared.session_name, "close"])
-        .current_dir(&prepared.dir)
+    let output = Command::new(program)
+        .args(["--session", session, command])
+        .args(args)
+        .current_dir(dir)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+        .output()
+        .context("playwright-cli failed to start")?;
+    if !output.status.success() {
+        bail!(
+            "playwright-cli {command} failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(output)
 }
 
 /// The part of `log` after the prompt, when the harness echoed it.

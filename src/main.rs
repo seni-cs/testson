@@ -99,10 +99,11 @@ enum Command {
         /// Attach to a browser already running with remote debugging, such as
         /// `http://127.0.0.1:9222`, instead of starting Chrome. It must not be logged in to the
         /// account of the other mode.
-        #[arg(long, value_name = "URL", requires = "mode", conflicts_with = "chrome")]
+        #[arg(long, value_name = "URL", requires = "mode")]
         cdp: Option<String>,
 
-        /// Path of the Chrome program to start. Found in the usual places by default.
+        /// Path of the Chrome program to start. Found in the usual places by default. Ignored
+        /// with `--cdp`, so `TESTSON_CHROME` may stay set.
         #[arg(long, env = "TESTSON_CHROME", value_name = "PATH")]
         chrome: Option<PathBuf>,
 
@@ -169,10 +170,18 @@ fn run() -> Result<bool> {
             agent,
         } => {
             let agent = agent.agent();
+            login::ensure_tools(&agent)?;
             let browser = cdp.map_or(Browser::Launch(chrome), Browser::Attach);
             let mut passed = true;
+            // One account failing does not keep the other from logging in.
             for mode in mode.map_or(Mode::ALL.to_vec(), |mode| vec![mode]) {
-                passed &= login::login(data_dir, mode, &url, &browser, &agent)?;
+                match login::login(data_dir, mode, &url, &browser, &agent) {
+                    Ok(logged_in) => passed &= logged_in,
+                    Err(error) => {
+                        eprintln!("error: {mode}: {error:#}");
+                        passed = false;
+                    }
+                }
             }
             Ok(passed)
         }
