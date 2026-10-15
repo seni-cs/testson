@@ -106,13 +106,12 @@ impl Fetcher for Http {
 ///
 /// # Errors
 ///
-/// Returns an error when any of the values is missing, or when the page gives one of them
-/// several different values.
+/// Returns an error when any of the three values is missing.
 pub fn parse_page_config(html: &str) -> Result<PageConfig> {
-    let market = capture(market_pattern(), html, "marketCode")?;
-    let brand = capture(brand_pattern(), html, "brandId")?;
-    let country = capture(country_pattern(), html, "countryCode")?;
-    let jurisdiction = capture(jurisdiction_pattern(), html, "jurisdiction")?;
+    let market = capture(market_pattern(), html, 1);
+    let brand = capture(brand_pattern(), html, 1);
+    let country = capture(jurisdiction_pattern(), html, 1);
+    let jurisdiction = capture(jurisdiction_pattern(), html, 2);
     match (market, brand, country, jurisdiction) {
         (Some(market), Some(brand), Some(country), Some(jurisdiction)) => Ok(PageConfig {
             market: market.to_owned(),
@@ -190,59 +189,21 @@ pub fn fetch_novedades(fetcher: &impl Fetcher) -> Result<Vec<Game>> {
     select_new_games(fetch_catalog(fetcher)?)
 }
 
-/// How the games of a list match a name.
-#[derive(Debug, PartialEq, Eq)]
-pub enum NameMatch {
-    /// No game has the name.
-    None,
-    /// One game has the name.
-    One(Game),
-    /// Several games have the name, under different identifiers.
-    Several(Vec<Game>),
-}
-
-/// Finds a game of the whole catalogue by its name, as [`match_name`] matches it.
+/// Finds a game of the whole catalogue by its name, ignoring case but preferring a game spelt
+/// exactly as given.
 ///
 /// # Errors
 ///
 /// Returns an error when the page or the games API cannot be read.
-pub fn find_game(fetcher: &impl Fetcher, name: &str) -> Result<NameMatch> {
-    let games = fetch_catalog(fetcher)?.into_iter().map(|(game, _)| game);
-    Ok(match_name(games, name))
-}
-
-/// Finds a game of the whole catalogue by its identifier.
-///
-/// # Errors
-///
-/// Returns an error when the page or the games API cannot be read.
-pub fn find_game_by_id(fetcher: &impl Fetcher, id: &str) -> Result<Option<Game>> {
-    let id = id.trim();
-    Ok(fetch_catalog(fetcher)?
+pub fn find_game(fetcher: &impl Fetcher, name: &str) -> Result<Option<Game>> {
+    let name = name.trim();
+    let games: Vec<Game> = fetch_catalog(fetcher)?
         .into_iter()
         .map(|(game, _)| game)
-        .find(|game| game.id == id))
-}
-
-/// Picks the games named `name`, ignoring case and the spaces around it. When some of them are
-/// spelt exactly as asked, only those count. A game listed twice under one identifier counts once.
-pub fn match_name(games: impl IntoIterator<Item = Game>, name: &str) -> NameMatch {
-    let name = name.trim();
-    let lowercase = name.to_lowercase();
-    let mut matches: Vec<Game> = games
-        .into_iter()
-        .filter(|game| game.name.to_lowercase() == lowercase)
+        .filter(|game| game.name.to_lowercase() == name.to_lowercase())
         .collect();
-    if matches.iter().any(|game| game.name == name) {
-        matches.retain(|game| game.name == name);
-    }
-    let mut seen = HashSet::new();
-    matches.retain(|game| seen.insert(game.id.clone()));
-    match matches.len() {
-        0 => NameMatch::None,
-        1 => NameMatch::One(matches.remove(0)),
-        _ => NameMatch::Several(matches),
-    }
+    let exact = games.iter().position(|game| game.name == name);
+    Ok(games.into_iter().nth(exact.unwrap_or(0)))
 }
 
 fn select_new_games(catalog: Vec<(Game, bool)>) -> Result<Vec<Game>> {
@@ -314,51 +275,26 @@ fn image_url(content: &Map<String, Value>) -> String {
         .to_owned()
 }
 
-/// The value the only group of `pattern` captures in `text`, if any. Every match must agree, so
-/// that a second object with another value of `key` is an error instead of a silent guess.
-fn capture<'a>(pattern: &Regex, text: &'a str, key: &str) -> Result<Option<&'a str>> {
-    let mut values: Vec<&str> = Vec::new();
-    for captures in pattern.captures_iter(text) {
-        let value = captures.get(1).map_or("", |item| item.as_str());
-        if !values.contains(&value) {
-            values.push(value);
-        }
-    }
-    if values.len() > 1 {
-        bail!(
-            "{NOVEDADES_URL} gives {key} several values ({}), so the market is unclear",
-            values.join(", ")
-        );
-    }
-    Ok(values.first().copied())
+fn capture<'a>(pattern: &Regex, text: &'a str, group: usize) -> Option<&'a str> {
+    pattern.captures(text)?.get(group).map(|item| item.as_str())
 }
-
-// Each key of the page config is read on its own, so the page may list them in any order and put
-// spaces around the colon. A key that appears more than once must have the same value each time.
 
 fn market_pattern() -> &'static Regex {
     static PATTERN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#""marketCode"\s*:\s*"([^"]+)""#).expect("market pattern"));
+        LazyLock::new(|| Regex::new(r#""marketCode":"([^"]+)""#).expect("market pattern"));
     &PATTERN
 }
 
 fn brand_pattern() -> &'static Regex {
-    static PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#""brandId"\s*:\s*"([0-9a-fA-F-]{36})""#).expect("brand pattern")
-    });
-    &PATTERN
-}
-
-fn country_pattern() -> &'static Regex {
-    static PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#""countryCode"\s*:\s*"([A-Z]{2})""#).expect("country pattern")
-    });
+    static PATTERN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#""brandId":"([0-9a-fA-F-]{36})""#).expect("brand pattern"));
     &PATTERN
 }
 
 fn jurisdiction_pattern() -> &'static Regex {
     static PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#""jurisdiction"\s*:\s*"([^"]+)""#).expect("jurisdiction pattern")
+        Regex::new(r#""countryCode":"([A-Z]{2})","jurisdiction":"([^"]+)""#)
+            .expect("jurisdiction pattern")
     });
     &PATTERN
 }
@@ -396,51 +332,6 @@ mod tests {
         assert_eq!(config.brand, "11111111-2222-3333-4444-555555555555");
         assert_eq!(config.country, "ES");
         assert_eq!(config.jurisdiction, "DGOJ");
-    }
-
-    #[test]
-    fn reads_page_config_keys_in_any_order_and_with_spaces() {
-        let html = r#"<script>window.config = {
-            "userContext": { "jurisdiction" : "DGOJ", "isBot": false, "countryCode":  "ES" },
-            "brandId":"11111111-2222-3333-4444-555555555555",
-            "content": {"marketCode" :"es"}
-        }</script>"#;
-        let config = parse_page_config(html).unwrap();
-        assert_eq!(config.market, "es");
-        assert_eq!(config.brand, "11111111-2222-3333-4444-555555555555");
-        assert_eq!(config.country, "ES");
-        assert_eq!(config.jurisdiction, "DGOJ");
-    }
-
-    #[test]
-    fn a_country_code_that_is_not_a_country_is_skipped() {
-        let html = r#"{"countryCode":"countryAddressInputConfigId"}
-            {"marketCode":"es","brandId":"11111111-2222-3333-4444-555555555555",
-             "jurisdiction":"DGOJ","countryCode":"ES"}"#;
-        assert_eq!(parse_page_config(html).unwrap().country, "ES");
-    }
-
-    #[test]
-    fn a_key_repeated_with_the_same_value_is_read() {
-        let html = format!(
-            r#"{HTML} {{"jurisdiction":"DGOJ","brandId":"11111111-2222-3333-4444-555555555555"}}"#
-        );
-        assert_eq!(parse_page_config(&html).unwrap().jurisdiction, "DGOJ");
-    }
-
-    #[test]
-    fn rejects_two_objects_with_conflicting_values() {
-        let html = r#"{"marketCode":"pe","countryCode":"PE","jurisdiction":"MINCETUR"}
-            {"marketCode":"es","brandId":"11111111-2222-3333-4444-555555555555",
-             "countryCode":"ES","jurisdiction":"DGOJ"}"#;
-        let error = parse_page_config(html).unwrap_err().to_string();
-        assert!(error.contains("marketCode"), "{error}");
-        assert!(error.contains("pe, es"), "{error}");
-
-        let html = format!(r#"{HTML} {{"countryCode":"PT","jurisdiction":"SRIJ"}}"#);
-        let error = parse_page_config(&html).unwrap_err().to_string();
-        assert!(error.contains("countryCode"), "{error}");
-        assert!(error.contains("ES, PT"), "{error}");
     }
 
     #[test]
@@ -540,66 +431,12 @@ mod tests {
     fn finds_any_game_of_the_catalogue_by_name() {
         let fetcher = MapFetcher {
             html: HTML,
-            games: r#"[{"id":"old","name":"Los Piratas Golfetes","collections":["Popular"]}]"#,
+            games: r#"[{"id":"old","name":"Los Piratas Golfetes","collections":["Popular"]},
+                        {"id":"new","name":"LOS PIRATAS GOLFETES","collections":["NewGames"]}]"#,
         };
-        let NameMatch::One(game) = find_game(&fetcher, " los piratas golfetes ").unwrap() else {
-            panic!("the game should be found");
-        };
-        assert_eq!(game.id, "old");
-        assert_eq!(find_game(&fetcher, "Missing").unwrap(), NameMatch::None);
-    }
-
-    #[test]
-    fn finds_a_game_of_the_catalogue_by_id() {
-        let fetcher = MapFetcher {
-            html: HTML,
-            games: r#"[{"id":"a","name":"Aviator"},{"id":"nyxAviator","name":"Aviator"}]"#,
-        };
-        let game = find_game_by_id(&fetcher, " nyxAviator ").unwrap().unwrap();
-        assert_eq!(game.id, "nyxAviator");
-        assert!(find_game_by_id(&fetcher, "nyxaviator").unwrap().is_none());
-    }
-
-    fn game(id: &str, name: &str) -> Game {
-        Game {
-            id: id.into(),
-            name: name.into(),
-            provider: String::new(),
-            primary_type: String::new(),
-            is_available_for_fun: false,
-            image_url: String::new(),
-        }
-    }
-
-    fn ids(found: NameMatch) -> Vec<String> {
-        match found {
-            NameMatch::None => Vec::new(),
-            NameMatch::One(game) => vec![game.id],
-            NameMatch::Several(games) => games.into_iter().map(|game| game.id).collect(),
-        }
-    }
-
-    #[test]
-    fn an_exact_name_wins_over_one_that_differs_in_case() {
-        let games = [game("upper", "AVIATOR"), game("exact", "Aviator")];
-        assert_eq!(ids(match_name(games.clone(), "Aviator")), ["exact"]);
-        assert_eq!(ids(match_name(games.clone(), "AVIATOR")), ["upper"]);
-        assert!(matches!(
-            match_name(games, "aviator"),
-            NameMatch::Several(_)
-        ));
-    }
-
-    #[test]
-    fn several_games_with_one_name_are_all_returned() {
-        let games = [
-            game("a", "Aviator"),
-            game("other", "Other"),
-            game("b", "Aviator"),
-            game("a", "Aviator"),
-        ];
-        let found = match_name(games, " Aviator ");
-        assert!(matches!(found, NameMatch::Several(_)));
-        assert_eq!(ids(found), ["a", "b"]);
+        let found = |name| find_game(&fetcher, name).unwrap().unwrap().id;
+        assert_eq!(found(" los piratas golfetes "), "old");
+        assert_eq!(found("LOS PIRATAS GOLFETES"), "new");
+        assert!(find_game(&fetcher, "Missing").unwrap().is_none());
     }
 }

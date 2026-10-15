@@ -41,8 +41,9 @@
       "minLength": 1
     },
     "game_url": {
-      "description": "https URL of the Betsson page the game was launched from, not of the frame of its provider.",
-      "type": "string"
+      "description": "URL of the game, or of the page it was launched from.",
+      "type": "string",
+      "format": "uri"
     },
     "started_at": {
       "description": "When the test started.",
@@ -60,8 +61,7 @@
       "minLength": 1
     },
     "trace_path": {
-      "description": "Deprecated: no longer written, so leave it out. Older documents hold the URL path of a Playwright trace among the served files, but a trace records the restored login session, so it now stays in the private run directory and readers must not link to it. It remains here only so those documents still validate.",
-      "deprecated": true,
+      "description": "No longer written: the trace records the login session, so it stays private and is never served. Older documents may still hold it.",
       "type": "string",
       "minLength": 1
     },
@@ -72,7 +72,7 @@
     },
     "error": {
       "description": "Why the test could not be completed. Present only when the status is 'test_failed'.",
-      "$ref": "#/$defs/test_error"
+      "$ref": "#/$defs/error"
     },
     "environment": { "$ref": "#/$defs/environment" }
   },
@@ -174,8 +174,9 @@
           "type": "string"
         },
         "source_url": {
-          "description": "URL of the script or page that produced the message, as the browser printed it.",
-          "type": "string"
+          "description": "URL of the script or page that produced the message.",
+          "type": "string",
+          "format": "uri"
         }
       }
     },
@@ -190,9 +191,9 @@
       ],
       "properties": {
         "url": {
-          "description": "URL that was requested, as the browser printed it.",
+          "description": "URL that was requested.",
           "type": "string",
-          "minLength": 1
+          "format": "uri"
         },
         "method": {
           "description": "HTTP method of the request.",
@@ -209,32 +210,6 @@
           "description": "Network-level failure reason, such as 'net::ERR_CONNECTION_REFUSED'.",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "test_error": {
-      "description": "Why the test could not be completed.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["message"],
-      "properties": {
-        "message": {
-          "description": "Error message.",
-          "type": "string",
-          "minLength": 1
-        },
-        "stack": {
-          "description": "Stack trace, if available.",
-          "type": "string"
-        },
-        "reason": {
-          "description": "What kind of problem stopped the test, when it is one the operator has to fix before any game can be tested. Absent for any other problem.",
-          "oneOf": [
-            {
-              "const": "session",
-              "description": "The login session was missing or expired: session-block.txt was not found or still holds placeholders, or the site still showed a logged-out page after the restore. session-block.txt must be created or refreshed."
-            }
-          ]
         }
       }
     },

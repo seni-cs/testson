@@ -8,24 +8,17 @@ small {
     font-size: var(--font-sm);
 }
 
-/* What the tests and the catalogue bring, such as names, summaries, addresses and messages, can
-   hold words longer than a phone is wide. They break wherever they must instead of widening the
-   page. Labels and badges, which are short and ours, are left to break between words only. */
-.banner h1,
-.provider,
-.chip,
-.summary,
-.timeline,
-figcaption,
-p.failure {
-    overflow-wrap: anywhere;
-}
-
-/* A stack trace keeps its lines as they are, and scrolls sideways instead of widening the page. */
 pre {
     font-family: ui-monospace, monospace;
-    max-width: 100%;
     overflow-x: auto;
+}
+
+/* Names, summaries, addresses and messages can hold words longer than a phone is wide. */
+.banner h1,
+.summary,
+.timeline,
+figcaption {
+    overflow-wrap: anywhere;
 }
 
 .back {
@@ -82,9 +75,8 @@ pre {
     color: var(--text);
 }
 
-/* In the colour of the text: the green of the chip around it is too light to draw it in. */
 .chip.available::before {
-    color: var(--text);
+    color: var(--success);
     content: "✓";
 }
 
@@ -199,7 +191,6 @@ pre {
     font-size: 1.375rem;
 }
 
-/* Without a zero minimum, a long word in the summary widens the test past the screen. */
 .overview {
     display: grid;
     gap: 2rem;
@@ -398,7 +389,7 @@ pre {
 .step.failed::before {
     background: var(--failure);
     border-color: var(--failure);
-    color: var(--background);
+    color: #ffffff;
 }
 
 .step.skipped {

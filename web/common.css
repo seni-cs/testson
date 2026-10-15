@@ -8,15 +8,12 @@
     --text: #000000de;
     --text-muted: #00000099;
     --primary: #ff6600;
-    /* The brand orange, dark enough to be read as text on every light background (WCAG AA,
-       4.5:1). The brand orange itself is kept for the wordmark and for borders. */
-    --primary-text: #ba4a00;
-    /* The colours of the statuses are dark enough to be told from every light background (3:1),
-       and the failure red to carry white text (4.5:1). */
-    --success: #009e3c;
-    --failure: #cc4540;
-    --test-failed: #a88003;
-    --warning: #c47e1e;
+    /* The brand orange, a little darker to be read as text on a light background. */
+    --primary-text: #eb5e00;
+    --success: #00aa41;
+    --failure: #f9554d;
+    --test-failed: #cf9c06;
+    --warning: #f8a127;
     --radius: 12px;
     --radius-control: 8px;
     --font-2xs: 0.6875rem;
@@ -35,10 +32,7 @@
         --text-muted: #ffffff99;
         --primary: #ff8533;
         --primary-text: #ff8533;
-        --success: #00aa41;
-        --failure: #f9554d;
         --test-failed: #facc15;
-        --warning: #f8a127;
     }
 }
 
@@ -199,9 +193,8 @@ main {
     padding: 0.375rem 0.875rem;
 }
 
-/* Filled with the colour of its text, which the colour of the page can be read on. */
 .button:hover {
-    background: var(--primary-text);
+    background: var(--primary);
     color: var(--background);
     text-decoration: none;
 }

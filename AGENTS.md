@@ -26,27 +26,22 @@ the binary, so restart it after each edit to them.
   `started_at` columns of `tests` are generated from it, so the document is the only place they
   are written. A change to the shape of the document starts in the schema. The schema is also
   compiled into the prompt in `prompts/test-game.txt`, so the agent sees the same one; keep the
-  prompt's instructions and example in step with it, and `check_report` in `src/run.rs` with
-  what the pages rely on.
+  prompt's instructions and example in step with it, and the types in `src/report.rs`, which
+  validate every report against it.
 - Migrations are numbered files in `migrations/`, listed in `MIGRATIONS` in `src/db.rs` and
   tracked with `user_version`. Add a new one instead of editing one that was already applied unless
   changes are not yet committed.
-- Every SQL query lives in `src/db.rs`. The handlers in `src/router.rs` do not touch the database
-  themselves.
+- Every SQL query lives in `src/db.rs`, grouped by table. The handlers in `src/router.rs` do not
+  touch the database themselves.
 - `web/` has no build step and no dependencies. `common.js` and `common.css` hold what the pages
   share; each page has a script and a stylesheet of its own beside them. `src/router.rs` compiles
-  every file in it into the binary with `include_str!`, so the server does not depend on the
-  directory it starts in: a new file there needs its own line in `PAGES`.
-- Handlers run their reads of the database through `spawn_blocking`, so a slow read does not hold
-  up the async runtime.
+  every file in it into the binary, so a new file there needs its own line in `PAGES`.
 - `data-dir/` is ignored by git. It holds the database, the assets, the private run directories
   and `session-block.txt`, the login. Only `data-dir/assets/` is served: nothing that holds the
-  session, such as the `session.js` of a run, the filled prompt, the restore script or the
-  Playwright trace, may be written there. Of it, only the videos and images in `ASSET_TYPES` in
-  `src/router.rs` are served, and never through a link.
-- The login never goes into the prompt or onto a command line: the model provider, its logs and
-  process listings would keep it. The agent restores it by running `restore-session.js`, which
-  loads the private `session.js` by path.
+  session, such as the restore script or the Playwright trace, may be written there, and only
+  the videos and images in `ASSET_EXTENSIONS` in `src/router.rs` are served from it.
+- The login never goes into the prompt: the agent restores it by running `restore-session.js` by
+  its path.
 - The agent never places a real-money bet. Changes to the prompt must keep its demo-only rules.
 
 ## Conventions

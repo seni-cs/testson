@@ -160,7 +160,6 @@
     }
 }
 
-/* A name with a word longer than the card breaks inside it rather than being cut at its edge. */
 .game h2 {
     -webkit-box-orient: vertical;
     display: -webkit-box;

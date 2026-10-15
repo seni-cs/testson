@@ -10,13 +10,10 @@ function renderGame(game) {
     // A game stands where its latest test left it, whatever the earlier ones found.
     const status = game.status ?? "untested";
     const card = element("a", "card game");
-    // The id is the catalogue's, and nothing stops it from holding a slash, a space or a `#`.
-    card.href = `/game/${encodeURIComponent(game.id)}`;
+    card.href = `/game/${game.id}`;
     card.dataset.status = status;
 
-    // Written in UTC like the day it was added on, so that both days on the card are counted the
-    // same way, even when one of them falls near midnight.
-    const tested = game.tested_at ? formatDay(game.tested_at, "UTC") : "Nunca";
+    const tested = game.tested_at ? formatDay(game.tested_at) : "Nunca";
 
     const facts = element("dl");
     facts.append(

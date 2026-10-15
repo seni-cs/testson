@@ -1,33 +1,4 @@
-// The names of the levels of console message the schema allows. A message of any other level,
-// such as `log` or `info`, is shown under the name of its level.
 const CONSOLE_LEVELS = { error: "Error", warning: "Aviso" };
-
-// Where the server serves the evidence of the tests from.
-const ASSETS_PATH = "/data/assets/";
-
-// The agent writes the document of a test, so the addresses in it are only followed when they lead
-// where they should: the evidence to a file of the assets, the game to an https page. Anything
-// else is shown as text. The server checks this already; the page does not rely on it.
-function parseUrl(address, base) {
-    try {
-        return new URL(address, base);
-    } catch {
-        return null;
-    }
-}
-
-function isAssetPath(path) {
-    const url = parseUrl(path, location.origin);
-    return (
-        String(path).startsWith(ASSETS_PATH) &&
-        url?.origin === location.origin &&
-        url.pathname.startsWith(ASSETS_PATH)
-    );
-}
-
-function isHttpsUrl(address) {
-    return parseUrl(address)?.protocol === "https:";
-}
 
 function formatDateTime(timestamp) {
     return new Date(timestamp).toLocaleString(LOCALE, { dateStyle: "medium", timeStyle: "short" });
@@ -39,12 +10,6 @@ function formatDuration(milliseconds) {
         maximumFractionDigits: 1,
     });
     return `${seconds} s`;
-}
-
-// The items of a list in a stored document. The schema makes them arrays, but a document may hold
-// something else in their place, which is then shown as no items at all.
-function items(list) {
-    return Array.isArray(list) ? list : [];
 }
 
 function formatCount(count, singular, plural) {
@@ -73,29 +38,19 @@ function setUpViewer() {
     viewer.addEventListener("close", () => document.getElementById("media").replaceChildren());
 }
 
-// The text of an error. The schema makes it an object with a message, but a stored document may
-// hold a plain text instead, or an object without a message.
-function errorText(error) {
-    if (typeof error !== "object" || error === null) {
-        return String(error).trim();
-    }
-    const message = error.message ?? "";
+function renderError(error) {
     // A stack usually starts with the message, but the schema does not guarantee it.
     const stack = error.stack ?? "";
-    const text = stack.includes(message) ? stack : `${message}\n${stack}`;
-    return text.trim() || JSON.stringify(error);
-}
-
-function renderError(error) {
-    return element("pre", "failure", errorText(error));
+    const text = stack.includes(error.message) ? stack : `${error.message}\n${stack}`;
+    return element("pre", "failure", text.trim());
 }
 
 function renderProperties(test) {
     const properties = element("dl", "properties");
-    properties.append(renderFact("Resultado", STATUS_LABELS[test.status]));
-    if (Number.isFinite(test.duration_ms)) {
-        properties.append(renderFact("Duración", formatDuration(test.duration_ms)));
-    }
+    properties.append(
+        renderFact("Resultado", STATUS_LABELS[test.status]),
+        renderFact("Duración", formatDuration(test.duration_ms)),
+    );
 
     const { browser, viewport } = test.environment ?? {};
     if (browser) {
@@ -104,20 +59,12 @@ function renderProperties(test) {
     if (viewport) {
         properties.append(renderFact("Resolución", `${viewport.width}×${viewport.height}`));
     }
-    if (test.game_url && isHttpsUrl(test.game_url)) {
+    if (test.game_url) {
         const game = element("a", "", "Abrir");
         game.href = test.game_url;
         game.target = "_blank";
         game.rel = "noreferrer";
         properties.append(renderFact("Juego", game));
-    } else if (test.game_url) {
-        properties.append(renderFact("Juego", test.game_url));
-    }
-    // The trace is never linked, not even the trace_path of an older test: a trace records the
-    // login session, so it stays in the private run directory.
-    // A recording that is not one of the assets is not played, only named.
-    if (test.video_path && !isAssetPath(test.video_path)) {
-        properties.append(renderFact("Grabación", test.video_path));
     }
     return properties;
 }
@@ -126,11 +73,6 @@ function renderScreenshot(screenshot) {
     const caption = screenshot.caption ?? "";
     // The image is all the button holds, so its description is also what names the button.
     const description = caption || "Captura de pantalla";
-    if (!isAssetPath(screenshot.path)) {
-        const figure = element("figure");
-        figure.append(element("figcaption", "", `${description}: ${screenshot.path}`));
-        return figure;
-    }
 
     const preview = element("img");
     // The loading mode only takes effect when it is set before the source.
@@ -200,11 +142,8 @@ function renderLog(title, badges, rows) {
 }
 
 function renderConsole(messages) {
-    const count = (level) => messages.filter((message) => message.level === level).length;
-    const errors = count("error");
-    const warnings = count("warning");
-    // Messages of a level the schema does not allow are counted apart, not as warnings.
-    const others = messages.length - errors - warnings;
+    const errors = messages.filter((message) => message.level === "error").length;
+    const warnings = messages.length - errors;
     const badges = [];
     if (errors > 0) {
         badges.push(element("span", "badge error", formatCount(errors, "error", "errores")));
@@ -212,17 +151,9 @@ function renderConsole(messages) {
     if (warnings > 0) {
         badges.push(element("span", "badge warning", formatCount(warnings, "aviso", "avisos")));
     }
-    if (others > 0) {
-        badges.push(element("span", "badge", formatCount(others, "otro", "otros")));
-    }
 
     const rows = messages.map((message) => {
-        const level = String(message.level ?? "");
-        const badge = element("span", "badge", CONSOLE_LEVELS[level] ?? level);
-        // Only the known levels have a colour; any other is a plain badge.
-        if (Object.hasOwn(CONSOLE_LEVELS, level)) {
-            badge.classList.add(level);
-        }
+        const badge = element("span", `badge ${message.level}`, CONSOLE_LEVELS[message.level]);
         return renderLogRow(badge, message.text, message.source_url);
     });
     return renderLog("Consola", badges, rows);
@@ -244,24 +175,21 @@ function renderStep(step) {
     if (step.action) {
         heading.append(element("code", "action", step.action), " ");
     }
-    heading.append(step.description ?? "");
+    heading.append(step.description);
     item.append(heading);
     if (step.error) {
         item.append(renderError(step.error));
     }
-    const screenshots = items(step.screenshots);
-    if (screenshots.length > 0) {
+    if (step.screenshots?.length) {
         const media = element("div", "media");
-        media.append(...screenshots.map(renderScreenshot));
+        media.append(...step.screenshots.map(renderScreenshot));
         item.append(media);
     }
-    const messages = items(step.console_messages);
-    if (messages.length > 0) {
-        item.append(renderConsole(messages));
+    if (step.console_messages?.length) {
+        item.append(renderConsole(step.console_messages));
     }
-    const requests = items(step.failed_requests);
-    if (requests.length > 0) {
-        item.append(renderFailedRequests(requests));
+    if (step.failed_requests?.length) {
+        item.append(renderFailedRequests(step.failed_requests));
     }
     return item;
 }
@@ -277,24 +205,19 @@ function renderDocument(title, test) {
     facts.append(renderProperties(test));
     const overview = element("div", "overview");
     overview.append(facts);
-    if (test.video_path && isAssetPath(test.video_path)) {
+    if (test.video_path) {
         overview.append(renderVideo(test.video_path));
     }
 
-    const content = [overview];
-    if (test.error) {
-        const failure = renderError(test.error);
-        failure.classList.add(test.status);
-        content.push(failure);
+    const timeline = element("ol", "timeline");
+    timeline.append(...test.steps.map(renderStep));
+
+    if (!test.error) {
+        return [overview, timeline];
     }
-    // A document without its list of steps, which the schema requires, has no timeline to show.
-    const steps = items(test.steps);
-    if (steps.length > 0) {
-        const timeline = element("ol", "timeline");
-        timeline.append(...steps.map(renderStep));
-        content.push(timeline);
-    }
-    return content;
+    const failure = renderError(test.error);
+    failure.classList.add(test.status);
+    return [overview, failure, timeline];
 }
 
 // Build what a test shows under its `title`: its stored document or, failing that, why it is not
@@ -416,21 +339,9 @@ function renderBanner(game) {
     return [renderCover(game.image_url), about];
 }
 
-// The id of the game in the address of the page. It comes encoded, unless the address was typed
-// with a `%` that starts no encoded character, which is then read as it is.
-function gameIdFromAddress() {
-    const segment = location.pathname.split("/").pop();
-    try {
-        return decodeURIComponent(segment);
-    } catch {
-        return segment;
-    }
-}
-
 async function showGame() {
-    // The id is encoded again to ask for the game.
-    const gameId = gameIdFromAddress();
-    const game = await fetchJson(`/api/game/${encodeURIComponent(gameId)}`);
+    const gameId = location.pathname.split("/").pop();
+    const game = await fetchJson(`/api/game/${gameId}`);
     document.title = `${game.name} · testson`;
     document.getElementById("game").append(...renderBanner(game));
 
