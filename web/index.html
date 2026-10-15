@@ -28,10 +28,24 @@
         <main>
             <header class="heading">
                 <h1>Games</h1>
-                <details class="legend">
-                    <summary aria-label="What each colour means">?</summary>
-                    <ul id="legend"></ul>
-                </details>
+                <div class="tools">
+                    <details id="providers" class="providers" hidden>
+                        <summary>
+                            <span class="muted">Providers:</span>
+                            <span id="providers-chosen">All</span>
+                        </summary>
+                        <div class="menu">
+                            <button id="providers-all" class="show-all" type="button">
+                                Show all
+                            </button>
+                            <ul id="providers-list" aria-label="Show the games of"></ul>
+                        </div>
+                    </details>
+                    <details class="legend">
+                        <summary aria-label="What each colour means">?</summary>
+                        <ul id="legend"></ul>
+                    </details>
+                </div>
             </header>
             <p id="error" role="alert" hidden></p>
             <nav id="filters" class="filters" aria-label="Filter the games by result"></nav>

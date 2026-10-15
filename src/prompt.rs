@@ -21,6 +21,10 @@ const SLUG_LIMIT: usize = 80;
 #[derive(Debug, Clone, Copy)]
 pub struct TemplateValues<'a> {
     pub game_name: &'a str,
+    /// The provider as the catalogue names it, such as `PragmaticPlay`.
+    pub provider: &'a str,
+    /// The primary type of the game as the catalogue names it, such as `Slots`.
+    pub game_type: &'a str,
     /// The mode as the schema names it, such as `real_money`.
     pub mode: &'a str,
     /// [`REAL_MONEY_INSTRUCTIONS`] or [`NO_BALANCE_INSTRUCTIONS`].
@@ -116,6 +120,8 @@ pub fn session_has_auth(state: &Value) -> bool {
 pub fn fill_template(template: &str, values: TemplateValues<'_>) -> Result<String> {
     let pairs = [
         ("GAME_NAME", values.game_name),
+        ("PROVIDER", values.provider),
+        ("GAME_TYPE", values.game_type),
         ("MODE", values.mode),
         (
             "MODE_INSTRUCTIONS",
@@ -160,6 +166,8 @@ mod tests {
 
     const VALUES: TemplateValues<'static> = TemplateValues {
         game_name: "Alpha",
+        provider: "Relax",
+        game_type: "Slots",
         mode: "no_balance",
         mode_instructions: "Mode no_balance.\n",
         betsson_url: "https://www.betsson.es/casino",
@@ -228,12 +236,12 @@ mod tests {
     #[test]
     fn fill_requires_every_placeholder() {
         let filled = fill_template(
-            "{{GAME_NAME}}|{{MODE}}|{{MODE_INSTRUCTIONS}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{CHECK_SCRIPT}}|{{SCHEMA}}|{{SCRIPT_SCHEMA}}",
+            "{{GAME_NAME}}|{{PROVIDER}}|{{GAME_TYPE}}|{{MODE}}|{{MODE_INSTRUCTIONS}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{CHECK_SCRIPT}}|{{SCHEMA}}|{{SCRIPT_SCHEMA}}",
             VALUES,
         )
         .unwrap();
         assert!(filled.starts_with(
-            "Alpha|no_balance|Mode no_balance.|https://www.betsson.es/casino|/tmp/out|/tmp/assets|betsson-alpha|/data/assets/alpha|testson check-script|{"
+            "Alpha|Relax|Slots|no_balance|Mode no_balance.|https://www.betsson.es/casino|/tmp/out|/tmp/assets|betsson-alpha|/data/assets/alpha|testson check-script|{"
         ));
         let error = fill_template("{{GAME_NAME}}", VALUES)
             .unwrap_err()

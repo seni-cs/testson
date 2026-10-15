@@ -324,8 +324,8 @@ pub fn test_game(
     Ok(tested)
 }
 
-/// The version of the game its provider serves now: the ETag of the build.js the latest test
-/// of the game loaded, asked for again without a browser. `None` when no test has seen one yet
+/// The version of the game its provider serves now: the version of the file of the game client
+/// the latest test of the game read, asked for again without a browser. `None` when no test has seen one yet
 /// or the server does not answer with one.
 ///
 /// # Errors
@@ -345,7 +345,10 @@ pub fn current_version(
             etag,
         })),
         Ok(None) => {
-            eprintln!("warning: {} came without an ETag.", known.build_url);
+            eprintln!(
+                "warning: {} came without an ETag or a Last-Modified date.",
+                known.build_url
+            );
             Ok(None)
         }
         Err(error) => {
@@ -368,7 +371,7 @@ fn run_agent(
     agent.ensure_installed()?;
     println!("Pinging {agent}...");
     agent.ping()?;
-    let prepared = prepare(data_dir, &game.name, url, mode)?;
+    let prepared = prepare(data_dir, game, url, mode)?;
     if prepared.session_missing {
         eprintln!(
             "warning: {} was not found. The agent will run without a restored login. Run \
@@ -571,8 +574,8 @@ pub fn ensure_playwright_cli() -> Result<()> {
 ///
 /// Fails when the session file of the mode is not a storage state or a run directory cannot be
 /// written.
-pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Result<Prepared> {
-    let mut prepared = prepare_run(data_dir, game_name, url, mode)?;
+pub fn prepare(data_dir: &Path, game: &Game, url: &str, mode: Mode) -> Result<Prepared> {
+    let mut prepared = prepare_run(data_dir, &game.name, url, mode)?;
     // The agent checks its script with this same program, so it learns what a replay refuses
     // while it can still fix it.
     let program = std::env::current_exe()
@@ -586,7 +589,9 @@ pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Resul
     prepared.prompt = fill_template(
         TEMPLATE,
         TemplateValues {
-            game_name,
+            game_name: &game.name,
+            provider: or_unknown(&game.provider),
+            game_type: or_unknown(&game.primary_type),
             mode: mode.as_str(),
             mode_instructions: mode.instructions(),
             betsson_url: url,
@@ -603,6 +608,11 @@ pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Resul
     )?;
     write_private(&prepared.dir.join("prompt.filled.txt"), &prepared.prompt)?;
     Ok(prepared)
+}
+
+/// What the catalogue says of a game, or that it does not say.
+fn or_unknown(text: &str) -> &str {
+    if text.is_empty() { "unknown" } else { text }
 }
 
 /// Writes `runs/<slug>-<mode>-<timestamp>/` and `assets/<slug>-<mode>-<timestamp>/` under
@@ -912,6 +922,18 @@ pub fn set_mode(path: &Path, mode: u32) {
 mod tests {
     use super::*;
 
+    /// A slot of Relax named `name`.
+    fn named(name: &str) -> Game {
+        Game {
+            id: slugify(name),
+            name: name.to_owned(),
+            provider: "Relax".into(),
+            primary_type: "Slots".into(),
+            is_available_for_fun: true,
+            image_url: String::new(),
+        }
+    }
+
     const SESSION: &str = r#"{"cookies": [], "origins": [{"origin": "https://www.betsson.es", "localStorage": [{"name": "session", "value": "token-7"}]}]}"#;
 
     #[test]
@@ -920,7 +942,7 @@ mod tests {
         fs::write(dir.path().join(Mode::RealMoney.session_file()), SESSION).unwrap();
         let prepared = prepare(
             dir.path(),
-            "Los Piratas Golfetes",
+            &named("Los Piratas Golfetes"),
             "https://www.betsson.es/casino",
             Mode::RealMoney,
         )
@@ -939,6 +961,8 @@ mod tests {
                 .starts_with("/data/assets/los-piratas-golfetes-real-money-")
         );
         assert!(prepared.prompt.contains("Game name: Los Piratas Golfetes"));
+        assert!(prepared.prompt.contains("Provider: Relax"));
+        assert!(prepared.prompt.contains("Game type: Slots"));
         assert!(prepared.prompt.contains("Mode real_money"));
         // The session must never land where the dashboard serves files from.
         assert!(
@@ -966,7 +990,7 @@ mod tests {
     fn prepare_rejects_a_broken_session_and_notes_a_missing_one() {
         let dir = tempfile::tempdir().unwrap();
         let url = "https://www.betsson.es/casino";
-        let prepared = prepare(dir.path(), "Alpha", url, Mode::NoBalance).unwrap();
+        let prepared = prepare(dir.path(), &named("Alpha"), url, Mode::NoBalance).unwrap();
         assert!(prepared.session_missing);
         assert!(prepared.prompt.contains("Mode no_balance"));
         let copy = fs::read_to_string(prepared.dir.join(SESSION_COPY)).unwrap();
@@ -976,10 +1000,10 @@ mod tests {
             "localStorage.setItem('session', 'old format');\n",
         )
         .unwrap();
-        let error = prepare(dir.path(), "Alpha", url, Mode::NoBalance).unwrap_err();
+        let error = prepare(dir.path(), &named("Alpha"), url, Mode::NoBalance).unwrap_err();
         assert!(error.to_string().contains("testson login"));
         // Each mode reads the session of its own account.
-        assert!(prepare(dir.path(), "Alpha", url, Mode::RealMoney).is_ok());
+        assert!(prepare(dir.path(), &named("Alpha"), url, Mode::RealMoney).is_ok());
     }
 
     #[test]
@@ -1016,7 +1040,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let prepared = prepare(
             dir.path(),
-            "Alpha",
+            &named("Alpha"),
             "https://www.betsson.es/casino",
             Mode::NoBalance,
         )

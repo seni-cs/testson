@@ -86,6 +86,7 @@ fn migrate(connection: &mut Connection) -> anyhow::Result<()> {
 pub struct GameSummary {
     id: String,
     name: String,
+    provider: String,
     image_url: String,
     added_on: String,
     real_money: Option<Latest>,
@@ -133,7 +134,7 @@ fn catalog_game(row: &Row<'_>) -> rusqlite::Result<catalog::Game> {
 pub fn select_games(data_dir: &Path) -> rusqlite::Result<Vec<GameSummary>> {
     let connection = connect(data_dir)?;
     let mut statement = connection.prepare(
-        "SELECT games.id, games.name, games.image_url, games.added_on,
+        "SELECT games.id, games.name, games.provider, games.image_url, games.added_on,
                 real_money.status, real_money.started_at, real_money.runner,
                 no_balance.status, no_balance.started_at, no_balance.runner
          FROM games
@@ -151,10 +152,11 @@ pub fn select_games(data_dir: &Path) -> rusqlite::Result<Vec<GameSummary>> {
         Ok(GameSummary {
             id: row.get(0)?,
             name: row.get(1)?,
-            image_url: row.get(2)?,
-            added_on: row.get(3)?,
-            real_money: latest(row, 4)?,
-            no_balance: latest(row, 7)?,
+            provider: row.get(2)?,
+            image_url: row.get(3)?,
+            added_on: row.get(4)?,
+            real_money: latest(row, 5)?,
+            no_balance: latest(row, 8)?,
         })
     })?;
     games.collect()

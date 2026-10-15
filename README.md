@@ -3,8 +3,8 @@
 **An AI agent tests every casino game with real money once per version, then hands the job to a
 replay script that runs with no model at all.**
 
-testson tests every Pragmatic Play game in the Betsson casino (about 300 of them) with two real
-accounts:
+testson tests every game in the casino section of Betsson, from every provider (about 2,150 games
+from 12 providers today), with two real accounts:
 
 | Mode         | Account        | `working` means                                                        |
 | ------------ | -------------- | ---------------------------------------------------------------------- |
@@ -15,7 +15,8 @@ An AI coding agent (Claude Code, Codex or Grok) drives a real browser through `p
 never uses demo mode, never deposits, and never stakes more than 1 €. While it tests, it writes the
 commands that worked as a **replay script**. testson replays that script itself until the game's
 version changes. Every test is stored in SQLite with its steps, screenshots, video, console log,
-failed requests and lobby↔game `postMessage`s, and a local dashboard shows the whole catalogue.
+failed requests and lobby↔game `postMessage`s, and a local dashboard shows the whole catalogue,
+filtered by provider and by status.
 
 > Pay for intelligence once per game version; run the regression for free.
 
@@ -37,13 +38,13 @@ flowchart LR
         runner -->|"no script, or<br/>replay handed over"| harness
     end
 
-    catalog[("Betsson public<br/>games catalogue")]
-    etag["build.js ETag<br/>HEAD request"]
+    catalog[("Betsson public<br/>games and collections")]
+    etag["game client version<br/>HEAD request"]
     pw["playwright-cli<br/>Chromium"]
     chrome["Google Chrome<br/>over DevTools"]
-    betsson["betsson.es<br/>+ Pragmatic Play game"]
+    betsson["betsson.es<br/>+ the provider's game"]
 
-    watch -->|"list ~300 games"| catalog
+    watch -->|"casino section,<br/>new games first"| catalog
     watch -->|"has the game changed?"| etag
     harness -->|"agent drives"| pw
     replay -->|"testson drives"| pw
@@ -74,8 +75,9 @@ The CLI writes to SQLite and the axum server only reads from it, so the two can 
 1. **Is there an active script for this game and mode?** If not, go to step 4.
 2. **Replay, with no model.** Read the balance and check the account is the right one for the
    mode, then open the game, fill in the gaming session and read the stake. **At the spin**,
-   check that the `build.js` ETag the browser loaded matches the script's version, and that the
-   stake is above 0, at most 1 € and within the balance. Then press once.
+   check that the file of the game client the browser loaded has the script's version, and that
+   the stake is above 0, at most 1 € and within the balance (above it, with no balance). Then
+   press once.
 3. **Replay outcome:**
    - **Every step ran:** `working`. The Betsson balance and the balance inside the game are
      checked apart. With real money, it is `failing` if either balance before, less the stake,
@@ -97,7 +99,7 @@ The CLI writes to SQLite and the axum server only reads from it, so the two can 
 
 ## Codebase explained
 
-Roughly 6,900 lines of Rust and 74 unit tests, shipped as **a single binary**: pages, prompts,
+Roughly 6,900 lines of Rust and 75 unit tests, shipped as **a single binary**: pages, prompts,
 schemas and migrations are compiled in. The dashboard has no build step and no dependencies.
 
 | Path | Responsibility |
@@ -110,7 +112,7 @@ schemas and migrations are compiled in. The dashboard has no build step and no d
 | `src/prompt.rs`, `prompts/` | Prompt filling and URL checks; the prompt, per-mode rules, `postMessage` capture |
 | `schema/*.json`, `src/report.rs` | JSON Schemas of a test and a script (also in the prompt); report validation |
 | `src/login.rs`, `scripts/` | Agent-free login in real Chrome |
-| `src/catalog.rs` | Public games catalogue behind a `Fetcher` trait, so tests never hit the network |
+| `src/catalog.rs` | Public games catalogue and game collections (the casino section, the new games) behind a `Fetcher` trait, so tests never hit the network |
 | `src/db.rs`, `migrations/` | Every SQL query, grouped by table; numbered migrations via `user_version` |
 | `src/router.rs`, `web/` | JSON API, pages and served evidence |
 
@@ -128,11 +130,21 @@ dialogs, are marked `optional`, so a replay skips them instead of breaking. Befo
 the agent runs `testson check-script` on its own script, so it can fix whatever a replay would
 refuse.
 
-**2. Change detection with one `HEAD` request.** A game's version is the ETag of its `build.js`
-(weak `W/"…"` and strong forms count as equal). `watch` checks it with no browser and no login,
-and retests a game only when it changed. The replay checks the ETag again just before it bets.
+**2. Every provider, new games first.** The games come from Betsson's public API: those of the
+`Casino` collection, the casino section of the lobby, so the live casino, the jackpots lobby and
+the sportsbook stay out. Its `NewGames` collection ("Novedades") is Betsson's list of new games:
+`watch` tests the games new to the dashboard first, then those, in Betsson's order, and
+`watch --new-games` tests only those. The prompt tells the agent the provider and the type of the
+game, and what "spin" means in a table game or a scratch card.
 
-**3. Real money, with layered guardrails.** Demo mode skips the wallet, the very part worth
+**3. Change detection with one `HEAD` request.** A game's version is that of one file of its
+client that changes with each release and keeps its URL: the `build.js` of Pragmatic Play, or the
+main script or page of another provider's client, which the agent picks. The version is the
+file's ETag (weak `W/"…"` and strong forms count as equal) or, when its server sends none, its
+Last-Modified date. `watch` checks it with no browser and no login, and retests a game only when it
+changed. The replay checks the version again, finding the file by its path, just before it bets.
+
+**4. Real money, with layered guardrails.** Demo mode skips the wallet, the very part worth
 testing. So safety is layered:
 
 | Layer | Guardrail |
@@ -140,21 +152,24 @@ testing. So safety is layered:
 | Prompt | Never demo, cashier, deposit, withdrawal, autoplay, bonus buy, ante bet or gamble. One press of spin, at the minimum stake, never above 1 € or the balance. The no-balance test never bets when the account has 0.10 € or more |
 | Operator | When Betsson asks for the gaming session Spanish rules require, testson sets 15 minutes and a **10 € loss limit** (the largest amount below it if the form refuses 10 €). Betsson enforces it |
 | Validator | Before every replay, each model-written script is checked. Page commands only, with no `run-code` and no `eval` that acts. At most one spin, nothing done after it. The balance is read before any action, and the stake right before the spin. Navigation stays on Betsson. No number above 10 is typed, and `type` never types a space, which would press Space and spin. No argument names the cashier, deposits, withdrawals, demo play, bonuses, buy features, autoplay or gamble, and no `eval` reads cookies or storage |
-| Runtime | The replay stops on the wrong account. At the spin, it also stops if the version changed or the stake is out of bounds. With no balance, it presses only when the stake is above the balance, so no round can be played |
+| Runtime | The replay stops on the wrong account. At the spin, it also stops if the version changed or the stake is out of bounds. With no balance, it presses only when the stake is above both balances, so no round can be played |
 | Orchestration | After a replay has spun, the agent isn't called in the same test. At most 3 attempts per game, mode and version |
 
-**4. Credentials never reach a model.** The login runs scripts with `playwright-cli`, with no
+**5. Credentials never reach a model.** The login runs scripts with `playwright-cli`, with no
 agent. Credentials are passed as `playwright-cli` secrets through a temporary file that is deleted
 before the first step, so no output or log holds them. The agent only loads the saved session by
 its path. Only videos and images under `data-dir/assets/` are served, on `127.0.0.1`. Sessions,
 traces and credentials stay private. Tokens are redacted from captured messages.
 
-**5. Auditable evidence.** Each test has numbered steps with screenshots, a video, console
-messages, failed requests and `postMessage`s. The game page shows who ran each test (**AI** or
-**Script**), the version it saw, and a timeline of new versions, scripts and status changes. The
-Stats page shows each game's latest 30 tests as a status bar with an uptime.
+**6. Auditable evidence.** Each test has numbered steps with screenshots, a video, console
+messages, failed requests and `postMessage`s. The games page filters by provider, with a toggle
+at the top, and by status, and each keeps its choice while the other changes. The game page shows
+who ran each test (**AI** or **Script**), the version it saw, and a timeline of new versions,
+scripts and status changes. The Stats page shows each game's latest 30 tests as a status bar with
+an uptime.
 
-**6. Model-agnostic.** `--harness claude|codex|grok`, with `--model` and `--effort`.
+**7. Model-agnostic.** `--harness claude|codex|grok`, with `--model` and `--effort`. Claude runs
+Haiku by default, the cheapest model, since the agent runs once per game version.
 
 ### Cost model
 
@@ -169,8 +184,8 @@ Let **S** be a game's minimum stake and **A** the model cost of one agent run, p
 | Login | 0 | 0 |
 
 Staked isn't lost. The expected loss is about `staked × (1 − RTP)`. *As an illustration only*,
-assume 300 games, S = 0.20 € and an RTP of 96 %. A first full pass then stakes at most 120 €, with
-an expected loss of about 4.80 €. The prompt is about 40 KB before any tool output.
+assume 2,150 games, S = 0.20 € and an RTP of 96 %. A first full pass then stakes at most 860 €,
+with an expected loss of about 34 €. `watch --new-games` or `--limit` keeps a pass smaller. The prompt is about 40 KB before any tool output.
 
 | Measured (fill in from real runs) | Agent | Replay |
 | --- | --- | --- |
@@ -187,14 +202,15 @@ Durations are stored as `duration_ms` on each test. Each run's cost is in
 | Limitation today | Next step |
 | --- | --- |
 | It spends **real money**, bounded but real | Operator test wallets or a provider staging RGS |
-| **Sequential**: one browser, and the modes run one after the other. A first full pass takes hours | A worker pool with an account pool |
-| The version is **only `build.js`'s ETag**, so asset or server-side changes go unseen | Fingerprint the asset manifest and game config, plus periodic replays |
+| **Sequential**: one browser, and the modes run one after the other. A first full pass of the casino takes days | A worker pool with an account pool |
+| The version is **one file's ETag or date**, so other asset or server-side changes go unseen. A release that renames that file stops the replay as a broken step, and the agent tests it | Fingerprint the asset manifest and game config, plus periodic replays |
 | The **first verdict is an LLM's** | More deterministic checks (`postMessage` contracts), a second-model review of `failing`, human triage |
 | The **login fights a fraud check**, and a captcha or SMS code needs a person | Official QA accounts or an operator API |
-| **Hard-wired scope**: one operator, one provider, Spanish rules, two modes | Pluggable operators, providers and jurisdictions; the mode prompts and `Fetcher` trait are the seams |
+| **Hard-wired scope**: one operator, Spanish rules, two modes | Pluggable operators, providers and jurisdictions; the mode prompts and `Fetcher` trait are the seams |
 | **Local only**: SQLite, `127.0.0.1`, no auth | A hosted, multi-tenant service with Postgres |
 | Model cost is **logged but not stored** per test, and Codex reports none | Store tokens and cost per test, with budget caps |
 | **No alerting** | Webhooks or Slack on `working → failing` |
+| A game that needs **a decision after the bet**, such as standing in blackjack or revealing a scratch card, can't be replayed, since nothing may act after the spin, so the agent tests every version of it | Allow a short list of decisions that bet nothing after the spin |
 
 **Vision:** a continuous compliance monitor for any operator's catalogue. Every game, on every
 release, in every jurisdiction, verified within minutes of the provider shipping it, at a marginal
@@ -214,7 +230,7 @@ playwright-cli install-browser chromium
 ```
 
 **1. Dashboard** (needs no account): run `cargo run -- serve` and open <http://127.0.0.1:8000>.
-`cargo run -- sync` lists every Pragmatic Play game on it without testing any.
+`cargo run -- sync` lists every game of the casino section on it without testing any.
 
 > ⚠️ The steps below **spend real money** (one minimum stake per real-money test) and **model
 > tokens**. Use dedicated test accounts.
@@ -251,12 +267,14 @@ model cost. The exit code is 0 only if every mode is `working`.
 **4. Watch the catalogue:**
 
 ```sh
-cargo run -- watch --list          # list only: no login, no spending
+cargo run -- watch --list          # list only, Betsson's new games first: no login, no spending
 cargo run -- watch --limit 1       # at most 1 game per check, new games first
+cargo run -- watch --new-games     # only the games Betsson lists as new ("Novedades")
 cargo run -- watch --every 30m     # repeat (minimum 60 s); one watch per data directory
 ```
 
-The first pass tests every game in both modes. Later checks retest only games whose version
+The first pass tests every game of the casino section in both modes: first those new to the
+dashboard, then those Betsson lists as new, in its order, then the rest by name. Later checks retest only games whose version
 changed, and retry a `test_failed` up to 3 times per mode and version.
 
 **Statuses.** `working` means the game behaved as the mode expects. `failing` means it didn't
@@ -266,7 +284,7 @@ nothing about the game.
 
 **Options.** Every command takes `--data-dir` (default `data-dir/`). Most flags also have an
 environment variable: `TESTSON_DATA_DIR`, `TESTSON_RUNNER`, `TESTSON_HARNESS`, `TESTSON_MODEL`,
-`TESTSON_EFFORT` and `TESTSON_CHROME`. With `claude` the default model is `sonnet` and the default
+`TESTSON_EFFORT` and `TESTSON_CHROME`. With `claude` the default model is `haiku` and the default
 effort `medium`; `codex` and `grok` use their own configured model.
 
 **Troubleshooting**

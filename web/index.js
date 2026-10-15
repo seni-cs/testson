@@ -9,6 +9,7 @@ function renderGame(game) {
     const card = element("a", "card game");
     card.href = `/game/${game.id}`;
     card.dataset.status = gameStatus(game);
+    card.dataset.provider = game.provider;
 
     const facts = element("dl");
     facts.append(
@@ -39,50 +40,128 @@ function renderLegend() {
     });
 }
 
-function renderFilters(cards) {
-    const filters = [null, ...Object.keys(STATUS_MEANINGS)];
-    const buttons = filters.map((status) => {
-        const keeps = (card) => status === null || card.dataset.status === status;
-        const count = cards.filter(keeps).length;
+// What the page shows: the games of the providers chosen, or of all of them when none is, and of
+// one status, or of all. Each filter keeps its choice while the other changes.
+const shown = { status: null, providers: new Set() };
 
+function providerShown(card) {
+    return shown.providers.size === 0 || shown.providers.has(card.dataset.provider);
+}
+
+function statusShown(card, status = shown.status) {
+    return status === null || card.dataset.status === status;
+}
+
+function renderFilters(update) {
+    const filters = [null, ...Object.keys(STATUS_MEANINGS)];
+    return filters.map((status) => {
         const button = element("button", "filter");
         button.type = "button";
-        button.disabled = count === 0;
-        // The page opens with every card in sight, which is what the first button stands for.
-        button.ariaPressed = String(status === null);
+        button.dataset.status = status ?? "";
         if (status === null) {
             button.append("All");
         } else {
             const label = element("span", "label", STATUS_LABELS[status]);
             button.append(renderDot(status), label);
         }
-        button.append(element("span", "count", count));
+        button.append(element("span", "count"));
         button.addEventListener("click", () => {
-            for (const other of buttons) {
-                other.ariaPressed = String(other === button);
-            }
-            for (const card of cards) {
-                card.hidden = !keeps(card);
-            }
+            shown.status = status;
+            update();
         });
         return button;
     });
-    return buttons;
 }
 
-function setUpLegend() {
-    const legend = document.querySelector(".legend");
-    document.getElementById("legend").append(...renderLegend());
+// Sets which filter is pressed, what each counts among the games of the providers shown, and
+// which cards show.
+function updateFilters(buttons, cards) {
+    const ofProviders = cards.filter(providerShown);
+    for (const button of buttons) {
+        const status = button.dataset.status || null;
+        const count = ofProviders.filter((card) => statusShown(card, status)).length;
+        button.querySelector(".count").textContent = count;
+        button.ariaPressed = String(status === shown.status);
+        // The pressed filter stays enabled, so that it can be seen to hold no game.
+        button.disabled = count === 0 && status !== shown.status;
+    }
+    for (const card of cards) {
+        card.hidden = !(providerShown(card) && statusShown(card));
+    }
+}
+
+function providerLabel(provider) {
+    return provider || "Unknown";
+}
+
+function renderProviders(games, update) {
+    const counts = new Map();
+    for (const game of games) {
+        counts.set(game.provider, (counts.get(game.provider) ?? 0) + 1);
+    }
+    const providers = [...counts.keys()].sort((one, other) =>
+        providerLabel(one).localeCompare(providerLabel(other)),
+    );
+    const boxes = providers.map((provider) => {
+        const box = element("input");
+        box.type = "checkbox";
+        box.value = provider;
+        box.addEventListener("change", () => {
+            if (box.checked) {
+                shown.providers.add(provider);
+            } else {
+                shown.providers.delete(provider);
+            }
+            update();
+        });
+        const label = element("label");
+        label.append(box, element("span", "", providerLabel(provider)));
+        label.append(element("span", "count", counts.get(provider)));
+        const item = element("li");
+        item.append(label);
+        return item;
+    });
+    document.getElementById("providers-list").append(...boxes);
+    document.getElementById("providers-all").addEventListener("click", () => {
+        shown.providers.clear();
+        for (const box of document.querySelectorAll("#providers-list input")) {
+            box.checked = false;
+        }
+        update();
+    });
+    document.getElementById("providers").hidden = false;
+}
+
+function updateProviders() {
+    const chosen = [...shown.providers].map(providerLabel).sort();
+    let text = "All";
+    if (chosen.length === 1) {
+        text = chosen[0];
+    } else if (chosen.length > 1) {
+        text = `${chosen.length} chosen`;
+    }
+    document.getElementById("providers-chosen").textContent = text;
+    document.getElementById("providers-all").disabled = chosen.length === 0;
+}
+
+// Closes a menu that hangs from a button when the click or the Escape key is elsewhere.
+function closeOutside(menu) {
     document.addEventListener("click", (event) => {
-        if (!legend.contains(event.target)) {
-            legend.open = false;
+        if (!menu.contains(event.target)) {
+            menu.open = false;
         }
     });
     document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
-            legend.open = false;
+            menu.open = false;
         }
     });
+}
+
+function setUpLegend() {
+    document.getElementById("legend").append(...renderLegend());
+    closeOutside(document.querySelector(".legend"));
+    closeOutside(document.getElementById("providers"));
 }
 
 async function showGames() {
@@ -96,7 +175,14 @@ async function showGames() {
     }
 
     const cards = games.map(renderGame);
-    document.getElementById("filters").append(...renderFilters(cards));
+    const buttons = renderFilters(() => update());
+    const update = () => {
+        updateProviders();
+        updateFilters(buttons, cards);
+    };
+    document.getElementById("filters").append(...buttons);
+    renderProviders(games, update);
+    update();
     container.append(...cards);
 }
 
