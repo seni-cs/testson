@@ -13,7 +13,7 @@ Each game is tested twice, in real-money mode, never in demo mode:
 An AI coding agent (Claude Code, Codex, or Grok) drives the browser through `playwright-cli`. It
 spends real money in the real-money test: one spin at the minimum stake, never above 1 €, with no
 autoplay, bonus buy or deposit. When Betsson asks for the gaming session Spanish rules require
-before a real-money game loads, the agent starts one of 15 minutes with a 1 € loss limit. Test one
+before a real-money game loads, the agent starts one of 15 minutes with a 10 € loss limit. Test one
 game by name, or `watch` the catalogue and test every Pragmatic Play game in both modes. Every test
 is stored in SQLite, and the dashboard lists the games with the outcome of their latest test in
 each mode and shows every test step by step, with its screenshots, video, console messages,
@@ -206,7 +206,7 @@ The script was written by a model and runs unattended, so it is checked before e
   between the two, so the stake checked is the one bet. Only an action may be optional. The replay stops
   before betting when the stake is not between 0 and 1 €, or is above the balance, or when the
   account is not the one of the mode.
-- It navigates only to Betsson, types no number above 5, and names no cashier, deposit, demo,
+- It navigates only to Betsson, types no number above 10, and names no cashier, deposit, demo,
   bonus or buy control.
 
 The game page shows who ran each test, AI or Script, the version it saw, and a history of the
