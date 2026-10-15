@@ -128,7 +128,6 @@ main {
     color: var(--text);
 }
 
-/* A round button with the moon in the light theme and the sun in the dark one. */
 .theme-toggle {
     align-items: center;
     background: none;
@@ -215,7 +214,6 @@ main {
     font-weight: 400;
 }
 
-/* Who ran a test: the agent, or the script it left, which costs no model run. */
 .runner {
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -262,7 +260,6 @@ main {
     font-size: 1.0625rem;
 }
 
-/* A link or a button, drawn as a button. */
 .button {
     background: none;
     border: 1px solid var(--primary);

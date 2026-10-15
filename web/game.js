@@ -1,9 +1,7 @@
 const CONSOLE_LEVELS = { error: "Error", warning: "Warning" };
 
-// Which window of the page received a postMessage.
 const DIRECTIONS = { to_lobby: "To lobby", to_frame: "To game" };
 
-// How far a replay of a script got.
 const SCRIPT_OUTCOMES = {
     completed: "Completed",
     step_failed: "A step of the script failed",
@@ -12,7 +10,6 @@ const SCRIPT_OUTCOMES = {
     blocked: "Blocked by the account or the stake",
 };
 
-// Why a script stopped being replayed.
 const RETIRED_REASONS = {
     version_changed: "the game changed version",
     step_failed: "a step stopped working",
@@ -43,7 +40,6 @@ function formatCount(count, singular, plural) {
     return `${count} ${count === 1 ? singular : plural}`;
 }
 
-// Show an image or a video over the page until the viewer is closed.
 function openViewer(media, caption) {
     const figure = document.getElementById("media");
     figure.replaceChildren(media);
@@ -76,7 +72,6 @@ function renderProperties(test) {
     const properties = element("dl", "properties");
     // Tests stored before there were scripts were all run by the agent.
     const runner = test.runner ?? "agent";
-    // The mark already names the runner; a script adds which one.
     const ranBy = [renderRunner(runner)];
     if (runner === "script" && test.script_id != null) {
         ranBy.push(` ${test.script_id}`);
@@ -159,7 +154,6 @@ function renderVideo(path) {
     return figure;
 }
 
-// Build a row of a log: its badge, its text and, underneath, where it came from if known.
 function renderLogRow(badge, text, source) {
     const body = element("div");
     body.append(element("span", "", text));
@@ -172,7 +166,6 @@ function renderLogRow(badge, text, source) {
     return row;
 }
 
-// Build a collapsed list of rows, whose always visible summary holds the title and the badges.
 function renderLog(title, badges, rows) {
     const summary = element("summary", "", title);
     summary.append(...badges);
@@ -248,7 +241,6 @@ function renderStep(step) {
     return item;
 }
 
-// Build the view of a test from its stored document, under the `title` already on screen.
 function renderDocument(title, test) {
     const facts = element("div");
     facts.append(title);
@@ -328,8 +320,6 @@ async function showTest(test) {
     }
 }
 
-// The part of an address that selects a test, so that the address of the page says which one is
-// shown.
 function testHash(test) {
     return `#test-${test.id}`;
 }
@@ -404,7 +394,6 @@ function revealTestLink(link) {
     }
 }
 
-// Show the test that the address of the page selects, or the latest one if it selects none.
 function showSelectedTest(tests) {
     const named = tests.find((test) => location.hash === testHash(test));
     // An address that names a test this game does not have is corrected to name none, which
@@ -428,10 +417,7 @@ function showSelectedTest(tests) {
     }
 }
 
-// Build what the banner of a game holds: its image, its name and, in a row under the name, what
-// is known about it.
 function renderBanner(game) {
-    // Whether the game can be played for fun is a yes or a no, so it is a mark of its own.
     const demo = game.is_available_for_fun
         ? element("span", "chip available", "Demo mode")
         : element("span", "chip unavailable", "No demo mode");
@@ -447,8 +433,6 @@ function renderBanner(game) {
     return [renderCover(game.image_url), about];
 }
 
-// What happened to a game, newest first: who tested it, the versions it went through, the
-// scripts its agent tests left and what became of them, and the changes of its status.
 function historyEvents(game) {
     const events = [];
     const add = (at, mode, text, testId) => events.push({ at, mode, text, testId });

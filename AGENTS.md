@@ -69,3 +69,6 @@ the binary, so restart it after each edit to them.
 ## Conventions
 
 - Code, comments and documentation are in English. The text the pages show is in English too.
+- Rust items keep their doc comments. Any other comment only says what the code cannot: a
+  reason, a constraint of the site or a tool, a workaround. Do not add comments that restate the
+  code, name a section, or describe a change; a well-named function or selector needs none.

@@ -1,4 +1,3 @@
-// What each status of a game means, in the order the legend and the filters list them.
 const STATUS_MEANINGS = {
     working: "The latest real-money and no-balance tests completed every step.",
     failing: "In one of the latest tests the game did not behave as expected.",
@@ -40,8 +39,6 @@ function renderLegend() {
     });
 }
 
-// Build a button that keeps every card, followed by one per status that keeps the cards in it.
-// Each shows how many cards it keeps.
 function renderFilters(cards) {
     const filters = [null, ...Object.keys(STATUS_MEANINGS)];
     const buttons = filters.map((status) => {
@@ -76,7 +73,6 @@ function renderFilters(cards) {
 function setUpLegend() {
     const legend = document.querySelector(".legend");
     document.getElementById("legend").append(...renderLegend());
-    // A click anywhere else on the page closes the legend, and so does the Escape key.
     document.addEventListener("click", (event) => {
         if (!legend.contains(event.target)) {
             legend.open = false;

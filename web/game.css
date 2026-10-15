@@ -28,7 +28,6 @@ figcaption {
     margin-bottom: 0.75rem;
 }
 
-/* The image of the game beside its name, straight on the page. */
 .banner {
     --cover-size: 5.5rem;
     align-items: center;
@@ -38,7 +37,6 @@ figcaption {
     margin-bottom: 1.5rem;
 }
 
-/* What is known about the game, in a row under its name. */
 .meta {
     align-items: center;
     display: flex;
@@ -244,7 +242,6 @@ figcaption {
     font-size: 0.5625rem;
 }
 
-/* Beside the test on wide screens, where the list stays in view while the test scrolls. */
 @media (min-width: 800px) {
     .layout {
         grid-template-columns: minmax(0, 1fr) 18rem;
@@ -282,7 +279,6 @@ figcaption {
     grid-template-columns: minmax(0, 1fr);
 }
 
-/* The recording sits beside the facts of the test where there is room for both. */
 @media (min-width: 1000px) {
     .overview {
         grid-template-columns: minmax(0, 1fr) 18rem;
@@ -432,7 +428,6 @@ figcaption {
     margin-top: 1rem;
 }
 
-/* The numbered marker of a step, coloured by how the step ended. */
 .step::before {
     border: 2px solid var(--text-muted);
     border-radius: 50%;
@@ -448,7 +443,6 @@ figcaption {
     width: var(--marker-size);
 }
 
-/* The line that joins a marker to the next one. */
 .step::after {
     background: var(--border);
     bottom: 0;
@@ -572,7 +566,6 @@ figcaption {
     border-color: var(--warning);
 }
 
-/* What happened to the game, under its tests: one line per event, newest first. */
 .history {
     margin-top: 1.5rem;
     padding: 1.25rem 1.5rem;

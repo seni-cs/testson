@@ -122,7 +122,6 @@
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
 }
 
-/* The image of the game from edge to edge on the left, and what is known about it on the right. */
 .game {
     --cover-size: 7.5rem;
     color: inherit;
@@ -149,7 +148,6 @@
     padding: 0.75rem;
 }
 
-/* With more room than a phone has, the image and the text beside it take a little more. */
 @media (min-width: 600px) {
     .game {
         --cover-size: 8.5rem;
@@ -169,7 +167,6 @@
     overflow-wrap: anywhere;
 }
 
-/* Kept at the bottom of the card, whatever the length of the name above. */
 .game dl {
     border-top: 1px solid var(--border);
     display: grid;
