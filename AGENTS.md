@@ -38,13 +38,19 @@ the binary, so restart it after each edit to them.
 - `web/` has no build step and no dependencies. `common.js` and `common.css` hold what the pages
   share; each page has a script and a stylesheet of its own beside them. `src/router.rs` compiles
   every file in it into the binary, so a new file there needs its own line in `PAGES`.
-- `data-dir/` is ignored by git. It holds the database, the assets, the private run directories
-  and the session files of the two accounts, `session-real-money.txt` and
-  `session-no-balance.txt`. Only `data-dir/assets/` is served: nothing that holds the session,
-  such as the restore script or the Playwright trace, may be written there, and only the videos
+- `data-dir/` is ignored by git. It holds the database, the assets, the private run directories,
+  and for each of the two accounts its credentials (`credentials-<mode>.env`), its saved session
+  (`session-<mode>.json`, a Playwright storage state) and the Chrome profile `testson login` uses
+  (`browser-<mode>/`). Only `data-dir/assets/` is served: nothing that holds the session, such as
+  its copy in a run directory or the Playwright trace, may be written there, and only the videos
   and images in `ASSET_EXTENSIONS` in `src/router.rs` are served from it.
-- The login never goes into the prompt: the agent restores it by running `restore-session.js` by
-  its path.
+- The login never goes into the prompt. A test loads the saved session with `state-load` by its
+  path. `testson login` runs in Google Chrome, reached over its DevTools port, because Betsson
+  blocks the login in the browser Playwright launches, with
+  `--disable-blink-features=AutomationControlled`, without which the port alone sets
+  `navigator.webdriver` and Betsson's fraud check refuses the login; the credentials reach `playwright-cli` as
+  secrets the agent types by name and never sees, and the file that holds them is removed before
+  the agent starts. `run-code` prints the code it runs, so never put a secret in a script.
 - The agent never plays in demo mode, never deposits, withdraws or opens the cashier, and presses
   spin once per test at the minimum stake, never above 1 €. The no-balance test never bets on an
   account with balance. The only limit it sets is the gaming session Spanish rules require before

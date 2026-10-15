@@ -53,50 +53,61 @@ and can run while it serves.
 
 ## Session
 
-Each mode logs in with its own account, from its own file in the data directory:
+Each mode plays with its own account. `testson login` logs in to each one and saves its cookies
+and localStorage, which every test of that mode then restores:
 
-| Mode         | Session file                      |
-| ------------ | --------------------------------- |
-| `real-money` | `data-dir/session-real-money.txt` |
-| `no-balance` | `data-dir/session-no-balance.txt` |
-
-The file is the only copy of that login. Each test of a mode copies its statements into a private
-`restore-session.js` in its run directory, which the agent runs by its path, so the login is never
-in the prompt. The run stops before calling the agent while any `REPLACE_WITH_` placeholder
-remains.
-If the file is missing, the run continues without a login and the test should come back as
-`test_failed`. A swapped file is caught too: the real-money test stops when the balance is zero,
-and the no-balance test stops, before opening the game, when the account has balance.
-
-On [betsson.es](https://www.betsson.es), logged in with the account of the mode, paste this into
-the DevTools console. It copies the four `localStorage.setItem` lines.
-
-```javascript
-(() => {
-  const keys = ["authReducer", "session", "authSession", "customerId"];
-  const missing = keys.filter((key) => localStorage.getItem(key) == null);
-  if (missing.length) {
-    throw new Error(
-      "Missing localStorage keys: " + missing.join(", ") +
-      ". Stay on https://www.betsson.es, log in, and run this again."
-    );
-  }
-  const text = keys.map((key) => {
-    const escaped = localStorage.getItem(key)
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'")
-      .replace(/\r/g, "\\r")
-      .replace(/\n/g, "\\n");
-    return `localStorage.setItem('${key}', '${escaped}');`;
-  }).join("\n");
-  copy(text);
-  return "Copied 4 lines. Paste them into the session file of this account.";
-})();
+```sh
+cargo run -- login
+cargo run -- login --mode no-balance
 ```
 
-Paste the copied lines into the session file of that account. Lines starting with `//` or `#` are
-comments. Refresh it when the site asks you to log in again. Log out of one account before you log
-in to the other, so the two files never hold the same session.
+Betsson blocks the login in the browser Playwright launches, so the login runs in Google Chrome
+instead. testson starts it with a profile of the account's own, `data-dir/browser-<mode>/`, and a
+free DevTools port, attaches `playwright-cli` to that port, and has the agent log in. An open
+DevTools port makes Chrome set `navigator.webdriver`, which Betsson's fraud check refuses, so
+testson starts Chrome with `--disable-blink-features=AutomationControlled`. The fraud check
+remembers a refused browser by its profile: if the login keeps failing with "Actualiza la página y
+vuelve a intentarlo en breve", delete `data-dir/browser-<mode>/` and log in again. The profile
+is kept, so the next login usually finds the account still logged in and only saves it again. Once
+the agent confirms the login, testson saves the state of the browser and closes Chrome. If the site
+asks for a captcha or a code sent by SMS or email, complete it in the Chrome window: the agent
+waits up to five minutes for it.
+
+The login reads the username and password of each account from its credentials file:
+
+| Mode         | Credentials file                      | Saved session                      |
+| ------------ | ------------------------------------- | ---------------------------------- |
+| `real-money` | `data-dir/credentials-real-money.env` | `data-dir/session-real-money.json` |
+| `no-balance` | `data-dir/credentials-no-balance.env` | `data-dir/session-no-balance.json` |
+
+```sh
+BETSSON_USERNAME=user@example.com
+BETSSON_PASSWORD=the password
+```
+
+The credentials never reach the agent. testson passes them to `playwright-cli` as two secrets and
+removes the file that held them before the agent starts. The agent types each one by its name,
+`BETSSON_USERNAME` or `BETSSON_PASSWORD`, and every snapshot shows the name, not the value.
+
+To log in on a browser of your own instead, start it with remote debugging and a profile that is
+not your everyday one, with the same flag, and pass its endpoint with the mode of the account it should log in to:
+
+```sh
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 --user-data-dir="$HOME/.testson-chrome" \
+  --disable-blink-features=AutomationControlled
+cargo run -- login --mode real-money --cdp http://127.0.0.1:9222
+```
+
+testson then leaves that browser open. Chrome is found in its usual place; `--chrome` (or
+`TESTSON_CHROME`) gives another path.
+
+Each test copies the saved session of its mode into its private run directory as `session.json`,
+and the agent loads it with `playwright-cli state-load` by its path, so the login is never in the
+prompt. If the saved session is missing, the run continues without a login and the test should
+come back as `test_failed`. Run `login` again when a test says the session expired. A swapped
+account is caught too: the real-money test stops when the balance is zero, and the no-balance test
+stops, before opening the game, when the account has balance.
 
 ## Test one game
 
@@ -140,7 +151,7 @@ what the agent said.
 ## Watch the Pragmatic Play games
 
 `watch` reads the games whose provider is `PragmaticPlay` from the public games API, about 300 of
-them. Listing does not need a login. The tests need both session files.
+them. Listing does not need a login. The tests need both sessions, saved with `testson login`.
 
 ```sh
 cargo run -- watch --list
@@ -155,8 +166,8 @@ To put every game on the dashboard without testing any, run `cargo run -- sync`.
 Every check adds the games to the dashboard and runs the same tests as `test` for each game and
 mode that has no `working` or `failing` test yet. A test that ends in `test_failed` is tried again
 at the next check, up to three attempts in that mode; after that the watch leaves it alone, and you
-can test it by hand with `testson test`. A test that cannot start, such as with a session file
-still holding placeholders or a tool missing, stops the check without counting an attempt. A game
+can test it by hand with `testson test`. A test that cannot start, such as with a saved session
+that is not valid JSON or a tool missing, stops the check without counting an attempt. A game
 that leaves the catalogue stays on the dashboard. The first check tests every game in both modes,
 which spends one minimum stake per game on the real-money account. Run `test` to test a game
 again.
@@ -166,7 +177,7 @@ or a number of seconds). One watch runs at a time per data directory.
 
 ## Harness and model
 
-`test`, `ping` and `watch` take `--harness`, `--model`, and `--effort`, or the `TESTSON_HARNESS`,
+`test`, `login`, `ping` and `watch` take `--harness`, `--model`, and `--effort`, or the `TESTSON_HARNESS`,
 `TESTSON_MODEL`, and `TESTSON_EFFORT` environment variables.
 
 | Harness            | Default model              | `--effort`                         |
@@ -197,11 +208,13 @@ Adding another agent CLI is one `Harness` variant in `src/harness.rs`, plus its 
 | `src/catalog.rs`               | The public games catalogue and the games of Pragmatic Play      |
 | `src/watch.rs`                 | The watch over those games and its lock                         |
 | `src/run.rs`                   | One test in one mode: its run, the agent and the stored test    |
+| `src/login.rs`                 | The login in Chrome over its DevTools port, and the saved state |
 | `src/report.rs`                | The validation of a report against the schema                   |
 | `src/harness.rs`               | The agent CLIs, model selection and the ping                    |
 | `src/events.rs`                | Readable progress from the claude and grok event streams        |
-| `src/prompt.rs`                | Filling the prompt, the session restore and the URL checks      |
+| `src/prompt.rs`                | Filling the prompts, the saved sessions and the URL checks      |
 | `prompts/test-game.txt`        | The prompt sent to the agent, compiled into the binary          |
+| `prompts/login.txt`            | The prompt of `login`, compiled into the binary                 |
 | `prompts/real-money.txt`       | The rules and criteria of each mode, put into that prompt       |
 | `prompts/no-balance.txt`       |                                                                 |
 | `migrations/`                  | The SQL migrations, compiled into the binary                    |
@@ -218,11 +231,13 @@ The data directory holds:
 
 ```text
 data-dir/
-  testson.db              games and tests
-  session-real-money.txt  the login of the account with balance, never served
-  session-no-balance.txt  the login of the account without balance, never served
+  testson.db                  games and tests
+  credentials-<mode>.env      the username and password of the account, never served
+  session-<mode>.json         the saved login of the account, never served
+  browser-<mode>/             the Chrome profile `login` uses, never served
   watch.lock
-  runs/<game>-<mode>-<time>/    private: prompt.filled.txt, restore-session.js, model.log,
+  runs/login-<mode>-<time>/     private: prompt.filled.txt, model.log
+  runs/<game>-<mode>-<time>/    private: prompt.filled.txt, session.json, model.log,
                                 report.json, .playwright-cli/traces/
   assets/<game>-<mode>-<time>/  served at /data/assets/: session.webm, screenshots/
 ```

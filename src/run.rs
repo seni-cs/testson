@@ -17,7 +17,7 @@ use crate::db;
 use crate::harness::{Agent, find_on_path};
 use crate::prompt::{
     NO_BALANCE_INSTRUCTIONS, REAL_MONEY_INSTRUCTIONS, TEMPLATE, TemplateValues, fill_template,
-    restore_script, session_has_placeholder, slugify,
+    session_has_auth, slugify,
 };
 use crate::report;
 use crate::router::{ASSETS_DIR, ASSETS_URL};
@@ -43,12 +43,32 @@ impl Mode {
         }
     }
 
-    /// The saved login of the account of this mode, in the data directory.
+    /// The saved login of the account of this mode, in the data directory: a Playwright storage
+    /// state that `testson login` writes.
     #[must_use]
     pub fn session_file(self) -> &'static str {
         match self {
-            Self::RealMoney => "session-real-money.txt",
-            Self::NoBalance => "session-no-balance.txt",
+            Self::RealMoney => "session-real-money.json",
+            Self::NoBalance => "session-no-balance.json",
+        }
+    }
+
+    /// The username and password `testson login` logs in to the account of this mode with.
+    #[must_use]
+    pub fn credentials_file(self) -> &'static str {
+        match self {
+            Self::RealMoney => "credentials-real-money.env",
+            Self::NoBalance => "credentials-no-balance.env",
+        }
+    }
+
+    /// The Chrome profile `testson login` logs in to the account of this mode in, so the two
+    /// accounts never share cookies.
+    #[must_use]
+    pub fn browser_profile(self) -> &'static str {
+        match self {
+            Self::RealMoney => "browser-real-money",
+            Self::NoBalance => "browser-no-balance",
         }
     }
 
@@ -75,7 +95,13 @@ impl std::fmt::Display for Mode {
 }
 
 /// Private run directories, beside the assets the dashboard serves. They hold the session.
-const RUNS_DIR: &str = "runs";
+pub const RUNS_DIR: &str = "runs";
+
+/// The copy of the saved session in a run directory, which the agent loads by its path.
+const SESSION_COPY: &str = "session.json";
+
+/// The storage state of a run whose mode has no saved session: it restores nothing.
+const EMPTY_SESSION: &str = "{\"cookies\": [], \"origins\": []}\n";
 
 /// How long one agent run may take before it is stopped.
 const RUN_TIMEOUT: Duration = Duration::from_secs(20 * 60);
@@ -83,7 +109,7 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 /// The run directories, written before the agent starts.
 #[derive(Debug)]
 pub struct Prepared {
-    /// Private: the filled prompt, the restore script, the model log, the report, and the trace.
+    /// Private: the filled prompt, the saved session, the model log, the report, and the trace.
     pub dir: PathBuf,
     /// Served by the dashboard: the video and the screenshots.
     pub assets_dir: PathBuf,
@@ -147,19 +173,15 @@ pub fn test_game(
     mode: Mode,
     agent: &Agent,
 ) -> Result<Outcome> {
-    if find_on_path("playwright-cli").is_none() {
-        bail!(
-            "playwright-cli is not on PATH.\nInstall it with: npm install -g @playwright/cli@0.1.22 \
-             && playwright-cli install-browser chromium"
-        );
-    }
+    ensure_playwright_cli()?;
     agent.ensure_installed()?;
     println!("Pinging {agent}...");
     agent.ping()?;
     let prepared = prepare(data_dir, &game.name, url, mode)?;
     if prepared.session_missing {
         eprintln!(
-            "warning: {} was not found. The agent will run without a restored login.",
+            "warning: {} was not found. The agent will run without a restored login. Run \
+             `testson login --mode {mode}` to save one.",
             data_dir.join(mode.session_file()).display()
         );
     }
@@ -208,12 +230,27 @@ pub fn test_game(
     Ok(outcome)
 }
 
+/// Fails with install instructions when `playwright-cli` is not on `PATH`.
+///
+/// # Errors
+///
+/// Fails when it is missing.
+pub fn ensure_playwright_cli() -> Result<()> {
+    if find_on_path("playwright-cli").is_none() {
+        bail!(
+            "playwright-cli is not on PATH.\nInstall it with: npm install -g @playwright/cli@0.1.22 \
+             && playwright-cli install-browser chromium"
+        );
+    }
+    Ok(())
+}
+
 /// Fills the prompt, and writes `runs/<slug>-<mode>-<timestamp>/` and
 /// `assets/<slug>-<mode>-<timestamp>/` under `data_dir`.
 ///
 /// # Errors
 ///
-/// Fails when the session file of the mode still has placeholders or a run directory cannot be
+/// Fails when the session file of the mode is not a storage state or a run directory cannot be
 /// written.
 pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Result<Prepared> {
     let (session, session_missing) = load_session(&data_dir.join(mode.session_file()))?;
@@ -252,7 +289,7 @@ pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Resul
             data_prefix: &data_prefix,
         },
     )?;
-    write_private(&dir.join("restore-session.js"), &restore_script(&session))?;
+    write_private(&dir.join(SESSION_COPY), &session)?;
     write_private(&dir.join("prompt.filled.txt"), &prompt)?;
     Ok(Prepared {
         dir,
@@ -363,7 +400,7 @@ fn close_browser(prepared: &Prepared) {
 /// The part of `log` after the prompt, when the harness echoed it.
 ///
 /// The prompt holds an example report, which must not be mistaken for the model's answer.
-fn after_echoed_prompt<'a>(log: &'a str, prompt: &str) -> &'a str {
+pub fn after_echoed_prompt<'a>(log: &'a str, prompt: &str) -> &'a str {
     let last_line = prompt.trim_end().lines().last().unwrap_or_default();
     match log.rfind(last_line) {
         Some(index) if !last_line.is_empty() => &log[index + last_line.len()..],
@@ -377,31 +414,41 @@ fn after_echoed_prompt<'a>(log: &'a str, prompt: &str) -> &'a str {
 ///
 /// Fails when no object with `schema_version` and `status` is present.
 pub fn extract_report(output: &str) -> Result<Value> {
-    for (start, _) in output.match_indices('{').rev() {
-        let mut deserializer = serde_json::Deserializer::from_str(&output[start..]);
-        if let Ok(value) = Value::deserialize(&mut deserializer)
-            && value.get("schema_version").is_some_and(Value::is_u64)
+    last_json_object(output, |value| {
+        value.get("schema_version").is_some_and(Value::is_u64)
             && value.get("status").is_some_and(Value::is_string)
-        {
-            return Ok(value);
-        }
-    }
-    bail!("model output did not contain a JSON report with schema_version")
+    })
+    .context("model output did not contain a JSON report with schema_version")
 }
 
+/// Returns the last JSON object in `output` that `accept` takes.
+pub fn last_json_object(output: &str, accept: impl Fn(&Value) -> bool) -> Option<Value> {
+    output.match_indices('{').rev().find_map(|(start, _)| {
+        let mut deserializer = serde_json::Deserializer::from_str(&output[start..]);
+        Value::deserialize(&mut deserializer)
+            .ok()
+            .filter(|value| accept(value))
+    })
+}
+
+/// Reads the saved session of a mode, or an empty one when there is none, and says whether it was
+/// missing.
 fn load_session(path: &Path) -> Result<(String, bool)> {
     if !path.is_file() {
-        return Ok((String::new(), true));
+        return Ok((EMPTY_SESSION.to_owned(), true));
     }
     set_mode(path, 0o600);
     let text =
         fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?;
-    if session_has_placeholder(&text) {
-        bail!(
-            "{} still contains REPLACE_WITH_ placeholders.\n\
-             Log in to Betsson with the account of this mode, copy the localStorage values, and \
-             replace the placeholders.\n\
-             The session expires. Update this file when the site starts asking you to log in.",
+    let state: Value = serde_json::from_str(&text).with_context(|| {
+        format!(
+            "{} is not a saved session. Save it again with `testson login`.",
+            path.display()
+        )
+    })?;
+    if !session_has_auth(&state) {
+        eprintln!(
+            "warning: {} holds no Betsson login. Save it again with `testson login`.",
             path.display()
         );
     }
@@ -409,7 +456,7 @@ fn load_session(path: &Path) -> Result<(String, bool)> {
 }
 
 /// Creates a private run directory named so that neither it nor its assets directory exists.
-fn create_run_dir(runs: &Path, assets: &Path, name: &str) -> Result<PathBuf> {
+pub fn create_run_dir(runs: &Path, assets: &Path, name: &str) -> Result<PathBuf> {
     fs::create_dir_all(runs).with_context(|| format!("could not create {}", runs.display()))?;
     set_mode(runs, 0o700);
     let mut folder = name.to_owned();
@@ -423,11 +470,11 @@ fn create_run_dir(runs: &Path, assets: &Path, name: &str) -> Result<PathBuf> {
 }
 
 /// The agent runs in the run directory, so the paths it is given must not be relative.
-fn absolute(path: &Path) -> Result<PathBuf> {
+pub fn absolute(path: &Path) -> Result<PathBuf> {
     std::path::absolute(path).with_context(|| format!("could not resolve {}", path.display()))
 }
 
-fn create_private(path: &Path) -> Result<File> {
+pub fn create_private(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -437,13 +484,13 @@ fn create_private(path: &Path) -> Result<File> {
         .with_context(|| format!("could not write {}", path.display()))
 }
 
-fn write_private(path: &Path, contents: &str) -> Result<()> {
+pub fn write_private(path: &Path, contents: &str) -> Result<()> {
     create_private(path)?
         .write_all(contents.as_bytes())
         .with_context(|| format!("could not write {}", path.display()))
 }
 
-fn set_mode(path: &Path, mode: u32) {
+pub fn set_mode(path: &Path, mode: u32) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -457,14 +504,12 @@ fn set_mode(path: &Path, mode: u32) {
 mod tests {
     use super::*;
 
+    const SESSION: &str = r#"{"cookies": [], "origins": [{"origin": "https://www.betsson.es", "localStorage": [{"name": "session", "value": "token-7"}]}]}"#;
+
     #[test]
-    fn prepare_writes_a_private_prompt_and_restore_script() {
+    fn prepare_writes_a_private_prompt_and_session() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join(Mode::RealMoney.session_file()),
-            "localStorage.setItem('customerId', '7');\n",
-        )
-        .unwrap();
+        fs::write(dir.path().join(Mode::RealMoney.session_file()), SESSION).unwrap();
         let prepared = prepare(
             dir.path(),
             "Los Piratas Golfetes",
@@ -494,9 +539,10 @@ mod tests {
                 .all(|entry| { entry.unwrap().file_name() == "screenshots" })
         );
         // The login stays out of the prompt, which the model provider keeps.
-        assert!(!prepared.prompt.contains("customerId"));
-        let restore = fs::read_to_string(prepared.dir.join("restore-session.js")).unwrap();
-        assert!(restore.contains("localStorage.setItem('customerId', '7');"));
+        assert!(!prepared.prompt.contains("token-7"));
+        assert!(prepared.prompt.contains(SESSION_COPY));
+        let copy = fs::read_to_string(prepared.dir.join(SESSION_COPY)).unwrap();
+        assert_eq!(copy, SESSION);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -509,21 +555,21 @@ mod tests {
     }
 
     #[test]
-    fn prepare_rejects_placeholders_and_notes_a_missing_session() {
+    fn prepare_rejects_a_broken_session_and_notes_a_missing_one() {
         let dir = tempfile::tempdir().unwrap();
         let url = "https://www.betsson.es/casino";
         let prepared = prepare(dir.path(), "Alpha", url, Mode::NoBalance).unwrap();
         assert!(prepared.session_missing);
         assert!(prepared.prompt.contains("Mode no_balance"));
-        let restore = fs::read_to_string(prepared.dir.join("restore-session.js")).unwrap();
-        assert!(restore.contains("no statements"));
+        let copy = fs::read_to_string(prepared.dir.join(SESSION_COPY)).unwrap();
+        assert_eq!(copy, EMPTY_SESSION);
         fs::write(
             dir.path().join(Mode::NoBalance.session_file()),
-            "localStorage.setItem('session', 'REPLACE_WITH_SESSION');\n",
+            "localStorage.setItem('session', 'old format');\n",
         )
         .unwrap();
         let error = prepare(dir.path(), "Alpha", url, Mode::NoBalance).unwrap_err();
-        assert!(error.to_string().contains("REPLACE_WITH_"));
+        assert!(error.to_string().contains("testson login"));
         // Each mode reads the session of its own account.
         assert!(prepare(dir.path(), "Alpha", url, Mode::RealMoney).is_ok());
     }
