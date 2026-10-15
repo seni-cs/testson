@@ -110,7 +110,6 @@
     text-align: right;
 }
 
-/* One bar per test, as status pages draw them, oldest on the left, in the colours of the dots. */
 .bars {
     display: flex;
     gap: 1px;
@@ -147,7 +146,6 @@
     margin: 0.5rem calc(var(--uptime-width) + 1rem) 0 calc(var(--name-width) + 1rem);
 }
 
-/* A phone puts the name and the uptime above the bars. */
 @media (max-width: 640px) {
     .game-row {
         grid-template-columns: minmax(0, 1fr) auto;

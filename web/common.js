@@ -1,7 +1,5 @@
-// The language and region whose conventions dates and numbers are written in.
 const LOCALE = "en-GB";
 
-// What the latest test of a game found, or `untested` for a game without tests.
 const STATUS_LABELS = {
     working: "Working",
     failing: "Failing",
@@ -27,13 +25,10 @@ const MODE_LABELS = {
     demo: "Demo",
 };
 
-// The modes every game is tested in, in the order they are listed.
 const MODES = ["real_money", "no_balance"];
 
-// What drove the browser in a test: the AI agent, or the script an agent run left.
 const RUNNER_LABELS = { agent: "AI", script: "Script" };
 
-// Build the mark of who ran a test.
 function renderRunner(runner) {
     const mark = element("span", `runner ${runner}`, RUNNER_LABELS[runner]);
     mark.title = runner === "script" ? "Replayed from the script, without AI" : "Tested by the AI";
@@ -59,7 +54,6 @@ function element(tag, className = "", text = "") {
     return node;
 }
 
-// Build the dot of a status, for beside the name of the status.
 function renderDot(status) {
     return element("span", `dot ${status}`);
 }
@@ -89,7 +83,6 @@ function renderCover(imageUrl) {
     return cover;
 }
 
-// Build a labelled fact, whose value is made of texts and elements.
 function renderFact(label, ...value) {
     const description = element("dd");
     description.append(...value);
@@ -98,7 +91,6 @@ function renderFact(label, ...value) {
     return fact;
 }
 
-// Build the notice that stands where a list has nothing to show yet.
 function renderEmpty(title, explanation) {
     const notice = element("div", "empty");
     notice.append(element("strong", "", title), element("span", "muted", explanation));

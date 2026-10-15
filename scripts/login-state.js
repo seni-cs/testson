@@ -1,4 +1,3 @@
-// Whether the page holds a Betsson login yet, and the error the login form shows, if any.
 async (page) => {
   const loggedIn = await page.evaluate(() =>
     ['session', 'authSession', 'authReducer'].some((key) => !!localStorage.getItem(key)),
