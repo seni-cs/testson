@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::catalog::{Fetcher, Game, PROVIDER, fetch_provider_games};
 use crate::db;
+use crate::report;
 use crate::run::{self, Mode};
 
 /// How many tests of a game in one mode may end without a verdict before the watch stops trying.
@@ -119,7 +120,7 @@ pub fn check(
         let current = run::current_version(data_dir, fetcher, &game.id)?;
         let known = db::latest_version(data_dir, &game.id)?;
         if let (Some(current), Some(known)) = (&current, &known)
-            && current.etag != known.etag
+            && !report::same_version(&current.etag, &known.etag)
         {
             changed.push(game.name.clone());
         }

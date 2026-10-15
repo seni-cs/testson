@@ -63,6 +63,10 @@
           "description": "A step of the script could not run: the script no longer fits the game, and the agent tests it again."
         },
         {
+          "const": "failed_after_spin",
+          "description": "A step after the spin could not run, so the round was played but not checked. The script is retired, and the agent tests the game at a later test, not right away, so as not to play another round."
+        },
+        {
           "const": "version_changed",
           "description": "The game loaded a build.js with another ETag than the one the script was written for, so the replay stopped before betting and the agent tests it again."
         },
@@ -227,7 +231,7 @@
           "oneOf": [
             { "const": "passed", "description": "The step ran and what it did or checked held." },
             { "const": "failed", "description": "The step ran and did not hold. It is the step the test stopped at." },
-            { "const": "skipped", "description": "The step never ran, because an earlier step failed." }
+            { "const": "skipped", "description": "The step never ran, because an earlier step failed, or it was an optional step of a replay script and what it handles did not show." }
           ]
         },
         "error": {

@@ -109,6 +109,9 @@ pub struct Step {
     pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub screenshot: bool,
+    /// An action on what some visits show and others do not, skipped when it finds nothing.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -218,11 +221,17 @@ pub fn validate(script: &Script, mode: Mode) -> Result<()> {
         );
     }
     if let Some(spin) = spin {
+        let stake = reading(Reading::Stake).first().copied();
         ensure!(
-            reading(Reading::Stake)
-                .first()
-                .is_some_and(|&stake| stake < spin),
+            stake.is_some_and(|stake| stake < spin),
             "the script reads the stake before it spins"
+        );
+        // The stake checked before the spin must be the one it bets.
+        ensure!(
+            stake.is_some_and(|stake| !script.steps[stake + 1..spin]
+                .iter()
+                .any(|step| step.role.acts())),
+            "nothing acts between the read of the stake and the spin"
         );
         for name in [Reading::Win, Reading::BalanceAfter] {
             ensure!(
@@ -304,6 +313,13 @@ fn check_step(step: &Step, after_spin: bool) -> Result<()> {
     ensure!(
         !after_spin || !step.role.acts(),
         "nothing is done after the spin but waiting, reading and checking"
+    );
+    if step.role == Role::Spin {
+        check_one_press(&step.commands)?;
+    }
+    ensure!(
+        !step.optional || step.role == Role::Action,
+        "only an action may be optional"
     );
     ensure!(
         step.timeout_ms
@@ -533,6 +549,7 @@ pub fn replay(browser: &mut impl Browser, context: &Replay<'_>, script: &Script)
         ran: 0,
         readings: Vec::new(),
         version: None,
+        spun: false,
     };
     let stop = run.all(script).err();
     run.finish(script, stop.as_ref(), started_at, clock)
@@ -550,6 +567,8 @@ struct Run<'a, B: Browser> {
     readings: Vec<(Reading, String, i64)>,
     /// The version of the game the replay saw, once it checked it.
     version: Option<GameVersion>,
+    /// The spin was pressed, or tried: a round may have been played.
+    spun: bool,
 }
 
 impl<B: Browser> Run<'_, B> {
@@ -586,6 +605,7 @@ impl<B: Browser> Run<'_, B> {
         if step.role == Role::Spin {
             self.check_version(&script.game_version)?;
             self.check_stake()?;
+            self.spun = true;
         }
         let result = match step.role {
             Role::Action | Role::Spin => self.act(step),
@@ -601,6 +621,15 @@ impl<B: Browser> Run<'_, B> {
             (None, Role::Pause) => ("wait".to_owned(), None),
             (None, _) => ("expect".to_owned(), None),
         };
+        if step.optional && result.is_err() {
+            // What it handles did not show this time, which is no failure.
+            let description = format!("{} (optional, not shown this time)", step.description);
+            let mut entry = report_step(&action, &description, None);
+            entry["status"] = json!("skipped");
+            self.steps.push(entry);
+            self.ran += 1;
+            return Ok(());
+        }
         let error = result.as_ref().err();
         let mut entry = report_step(&action, &step.description, error.map(String::as_str));
         if let Some(target) = target {
@@ -715,7 +744,7 @@ impl<B: Browser> Run<'_, B> {
             self.fail_last(&message);
             Stop::Step(message)
         })?;
-        let changed = version.etag != expected.etag;
+        let changed = !report::same_version(&version.etag, &expected.etag);
         let message = format!(
             "The game loaded build.js with ETag {}, but the script was written for {}.",
             version.etag, expected.etag
@@ -895,7 +924,7 @@ impl<B: Browser> Run<'_, B> {
         self.browser.run(&strings(&["video-stop"]));
 
         let mode = self.context.mode;
-        let (status, outcome, summary) = verdict(mode, stop);
+        let (status, outcome, summary) = verdict(mode, stop, self.spun);
         let mut steps = std::mem::take(&mut self.steps);
         steps.extend(
             script
@@ -959,9 +988,20 @@ impl<B: Browser> Run<'_, B> {
 }
 
 /// The status, the `script_outcome` and the summary of a replay that stopped at `stop`, or ran
-/// to its end.
-fn verdict(mode: Mode, stop: Option<&Stop>) -> (&'static str, &'static str, &'static str) {
+/// to its end, having pressed the spin or not.
+fn verdict(
+    mode: Mode,
+    stop: Option<&Stop>,
+    spun: bool,
+) -> (&'static str, &'static str, &'static str) {
     match stop {
+        // The agent would play another round, so it waits for a later test.
+        Some(Stop::Step(_)) if spun => (
+            "test_failed",
+            "failed_after_spin",
+            "A step after the spin did not run or did not hold, so the round was not checked. \
+             The agent tests the game at a later test, not now, so as not to play another round.",
+        ),
         None if mode == Mode::RealMoney => (
             "working",
             "completed",
@@ -1068,6 +1108,34 @@ fn euros(cents: i64) -> String {
 }
 
 /// The command a list of arguments runs, past its options, and the target it acts on, if any.
+/// Every command of a step runs, so the commands of a spin press exactly once: one `click`,
+/// `press` or `mousedown`, which only moves of the pointer may come before, and only the
+/// `mouseup` of that `mousedown` after. Anything else could bet twice or change the stake.
+fn check_one_press(commands: &[Vec<String>]) -> Result<()> {
+    let names: Vec<String> = commands
+        .iter()
+        .map(|command| name_and_target(command).0)
+        .collect();
+    let press = names
+        .iter()
+        .position(|name| matches!(name.as_str(), "click" | "press" | "mousedown"));
+    let Some(press) = press else {
+        bail!("the spin presses nothing");
+    };
+    ensure!(
+        names[..press]
+            .iter()
+            .all(|name| matches!(name.as_str(), "mousemove" | "hover")),
+        "the spin only moves the pointer before it presses"
+    );
+    let after: Vec<&str> = names[press + 1..].iter().map(String::as_str).collect();
+    ensure!(
+        after.is_empty() || (names[press] == "mousedown" && after == ["mouseup"]),
+        "the spin presses exactly once, and only releases the mouse after it"
+    );
+    Ok(())
+}
+
 fn name_and_target(command: &[String]) -> (String, Option<String>) {
     let mut rest = command
         .iter()
@@ -1299,6 +1367,47 @@ mod tests {
         let mut late = script();
         late["steps"].as_array_mut().unwrap().swap(0, 1);
         assert!(parsed(&late).is_err());
+    }
+
+    #[test]
+    fn rejects_a_spin_that_could_bet_twice_or_change_the_stake() {
+        // A spin presses once, and does nothing else that could bet or change the stake.
+        for commands in [
+            json!([["click", "#spin"], ["click", "#spin"]]),
+            json!([["click", "#bet-plus"], ["click", "#spin"]]),
+            json!([["mousedown"], ["mouseup"], ["mousedown"]]),
+            json!([["mousewheel", "0", "100"], ["mousedown"], ["mouseup"]]),
+            json!([["mousemove", "1200", "780"]]),
+        ] {
+            let mut broken = script();
+            broken["steps"][4]["commands"] = commands.clone();
+            assert!(parsed(&broken).is_err(), "{commands} was accepted");
+        }
+        // The stake checked before the spin is the one bet, so nothing acts in between.
+        let mut raised = script();
+        raised["steps"].as_array_mut().unwrap().insert(
+            4,
+            json!({ "role": "action", "description": "Raise the stake",
+                    "commands": [["click", "#bet-plus"]] }),
+        );
+        assert!(parsed(&raised).is_err());
+        // Only an action may be skipped.
+        for step in [2, 4] {
+            let mut broken = script();
+            broken["steps"][step]["optional"] = json!(true);
+            assert!(
+                parsed(&broken).is_err(),
+                "an optional step {step} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_spin_may_be_one_click_and_an_action_optional() {
+        let mut simple = script();
+        simple["steps"][4]["commands"] = json!([["click", "#spin"]]);
+        simple["steps"][1]["optional"] = json!(true);
+        parsed(&simple).unwrap();
     }
 
     #[test]
@@ -1582,14 +1691,40 @@ mod tests {
     }
 
     #[test]
-    fn a_check_that_fails_after_the_spin_goes_to_the_agent() {
+    fn a_check_that_fails_after_the_spin_waits_for_the_next_test() {
         let (document, ran) = replay_with(
             |command| (!command.starts_with("response-body")).then(|| game(command)),
             &script(),
         );
         assert!(spun(&ran));
         assert_eq!(document["status"], "test_failed");
+        assert_eq!(document["script_outcome"], "failed_after_spin");
+    }
+
+    #[test]
+    fn an_optional_step_with_nothing_to_act_on_is_skipped() {
+        let mut with_form = script();
+        with_form["steps"].as_array_mut().unwrap().insert(
+            2,
+            json!({ "role": "action", "description": "Fill the gaming-session form",
+                    "optional": true,
+                    "commands": [["click", "getByRole('button', { name: '15 Min' })"]] }),
+        );
+        let (document, ran) = replay_with(
+            |command| (!command.contains("15 Min")).then(|| game(command)),
+            &with_form,
+        );
+        assert_eq!(document["status"], "working", "{document:#}");
+        assert_eq!(document["steps"][8]["status"], "skipped");
+        assert!(spun(&ran));
+        // The same step, when every visit needs it, breaks the script.
+        with_form["steps"][2]["optional"] = json!(false);
+        let (document, ran) = replay_with(
+            |command| (!command.contains("15 Min")).then(|| game(command)),
+            &with_form,
+        );
         assert_eq!(document["script_outcome"], "step_failed");
+        assert!(!spun(&ran));
     }
 
     #[test]

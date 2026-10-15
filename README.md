@@ -175,9 +175,17 @@ belongs to one game, one mode and one version:
 2. When the agent finds it `working`, the `script.json` it wrote is checked and stored, and
    replayed at once as a test of its own. In real-money mode that is a second round.
 3. Later tests replay the script. Before the spin, the replay checks that the `build.js` the
-   browser loaded has the ETag of the script, and stops before betting when it does not.
+   browser loaded has the ETag of the script, and stops before betting when it does not. An
+   ETag the server marks as weak, `W/"…"`, names the same version as the strong one.
 4. A replay that stops because a step no longer runs, or because the version changed, is stored
-   as `test_failed`. Its script is retired, and the agent tests the game again.
+   as `test_failed`. Its script is retired, and the agent tests the game again. When the step
+   that failed came after the spin, the round was played, so the agent waits for the next test
+   instead of playing another one at once, and the replay counts as an attempt.
+
+Some screens show on one visit and not on the next, such as the notice of a gaming session that
+ended less than an hour ago, the gaming-session form, which does not show while a session is
+active, or the intro screen of a game. The agent marks the actions on them `optional`, and the
+replay skips such an action when it finds nothing to act on.
 
 Every test, by the agent or by a script, is stored on its own, with `runner` saying which. A replay
 that ran every step is `working`, or, in real-money mode, `failing` when the balance after the
@@ -189,9 +197,10 @@ The script was written by a model and runs unattended, so it is checked before e
 
 - Only page commands, such as `click`, `fill`, `mousedown` or `find`, are allowed. `run-code` is
   not, and an `eval` may only read.
-- It spins once at most, and exactly once with real money, and acts on nothing after the spin.
-  Only the spin may press Space, which spins most games.
-- It reads the balance before doing anything, and the stake before the spin. The replay stops
+- It spins once at most, and exactly once with real money, with a single press, and acts on
+  nothing after the spin. Only the spin may press Space, which spins most games.
+- It reads the balance before doing anything, and the stake before the spin, with no action
+  between the two, so the stake checked is the one bet. Only an action may be optional. The replay stops
   before betting when the stake is not between 0 and 1 €, or is above the balance, or when the
   account is not the one of the mode.
 - It navigates only to Betsson, types no number above 5, and names no cashier, deposit, demo,

@@ -7,6 +7,7 @@ const DIRECTIONS = { to_lobby: "Al lobby", to_frame: "Al juego" };
 const SCRIPT_OUTCOMES = {
     completed: "Completo",
     step_failed: "Un paso del script falló",
+    failed_after_spin: "Un paso falló tras la tirada",
     version_changed: "Nueva versión del juego",
     blocked: "Bloqueado por la cuenta o la apuesta",
 };
@@ -415,7 +416,10 @@ function historyEvents(game) {
             }
             version = test.etag ?? version;
             if (test.script_outcome && test.script_outcome !== "completed") {
-                const next = test.script_outcome === "blocked" ? "" : ", se prueba con IA";
+                const next = {
+                    blocked: "",
+                    failed_after_spin: ", se prueba con IA en el siguiente test",
+                }[test.script_outcome] ?? ", se prueba con IA";
                 const text = `Script ${test.script_id}: ${SCRIPT_OUTCOMES[test.script_outcome]}${next}`;
                 add(test.started_at, mode, text, test.id);
             }
