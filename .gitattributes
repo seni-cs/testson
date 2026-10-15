@@ -1,0 +1,2 @@
+# Check out text files with LF on every platform, so files written on Windows match the repository.
+* text=auto eol=lf

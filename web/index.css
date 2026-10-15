@@ -160,12 +160,14 @@
     }
 }
 
+/* A name with a word longer than the card breaks inside it rather than being cut at its edge. */
 .game h2 {
     -webkit-box-orient: vertical;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
+    overflow-wrap: anywhere;
 }
 
 /* Kept at the bottom of the card, whatever the length of the name above. */

@@ -1,0 +1,6 @@
+# The toolchain the checks run with, so Clippy and rustfmt flag the same lints on every machine.
+# The minimum supported version is `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.99"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

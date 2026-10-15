@@ -15,7 +15,8 @@ trait, which they replace. Running a real test spends model tokens and needs a v
 `session-block.txt`, so do it only when asked.
 
 For a change to the pages or the routes, start the server with `cargo run -- serve` from the root
-of the repository and look at the result at <http://127.0.0.1:8000>.
+of the repository and look at the result at <http://127.0.0.1:8000>. The pages are compiled into
+the binary, so restart it after each edit to them.
 
 ## Design
 
@@ -33,10 +34,19 @@ of the repository and look at the result at <http://127.0.0.1:8000>.
 - Every SQL query lives in `src/db.rs`. The handlers in `src/router.rs` do not touch the database
   themselves.
 - `web/` has no build step and no dependencies. `common.js` and `common.css` hold what the pages
-  share; each page has a script and a stylesheet of its own beside them.
+  share; each page has a script and a stylesheet of its own beside them. `src/router.rs` compiles
+  every file in it into the binary with `include_str!`, so the server does not depend on the
+  directory it starts in: a new file there needs its own line in `PAGES`.
+- Handlers run their reads of the database through `spawn_blocking`, so a slow read does not hold
+  up the async runtime.
 - `data-dir/` is ignored by git. It holds the database, the assets, the private run directories
   and `session-block.txt`, the login. Only `data-dir/assets/` is served: nothing that holds the
-  session, such as the filled prompt or the restore script, may be written there.
+  session, such as the `session.js` of a run, the filled prompt, the restore script or the
+  Playwright trace, may be written there. Of it, only the videos and images in `ASSET_TYPES` in
+  `src/router.rs` are served, and never through a link.
+- The login never goes into the prompt or onto a command line: the model provider, its logs and
+  process listings would keep it. The agent restores it by running `restore-session.js`, which
+  loads the private `session.js` by path.
 - The agent never places a real-money bet. Changes to the prompt must keep its demo-only rules.
 
 ## Conventions
