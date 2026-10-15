@@ -51,10 +51,10 @@
           "description": "What the step is for, which decides what it may hold and how its failure is read.",
           "oneOf": [
             { "const": "action", "description": "Runs its commands, such as a search, a click or the gaming-session form. Only before the spin." },
-            { "const": "spin", "description": "Presses spin once at the minimum stake: one click, press or mousedown, which only mousemove or hover may come before, and only the mouseup of that mousedown after. At most one per script, exactly one in real_money. Nothing between the read of the stake and the spin may act." },
+            { "const": "spin", "description": "Presses spin once at the minimum stake: one click, press or mousedown, which only mousemove or hover may come before, and only the mouseup of that mousedown after. At most one per script, exactly one in real_money. Nothing between the read of the stake and the spin may act. In no_balance, an expect of the message that the balance is not enough comes after it." },
             { "const": "pause", "description": "Waits timeout_ms, for an animation that gives no other sign it ended." },
             { "const": "expect", "description": "Probes until the text matches, within timeout_ms, such as for the game to be ready or for the message a mode expects." },
-            { "const": "read", "description": "Probes until the text matches, within timeout_ms, and keeps the value as the reading in name. balance_after is probed until it is the balance the stake and the win leave." }
+            { "const": "read", "description": "Probes until the text matches, within timeout_ms, and keeps the value as the reading in name. balance_after is probed until it is the balance the stake and the win leave. In real_money, read the win too, even when the round won nothing." }
           ]
         },
         "description": {
@@ -63,7 +63,7 @@
           "minLength": 1
         },
         "commands": {
-          "description": "playwright-cli commands without the session option, each as its arguments, such as [\"click\", \"getByRole('button', { name: 'Jugar' })\"]. Targets are CSS selectors or Playwright locators, never snapshot refs. A probe reads the output of the last one. The only option is --raw, before the command.",
+          "description": "playwright-cli commands without the session option, each as its arguments, such as [\"click\", \"getByRole('button', { name: 'Jugar' })\"]. Targets are CSS selectors or Playwright locators, never snapshot refs. A probe reads the output of the last one. The only option is --raw, before the command. type never types a space: fill a field instead.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -73,7 +73,7 @@
           }
         },
         "source": {
-          "description": "What a probe reads: the output of its commands, the postMessages received so far as JSON, or the body of the latest response whose URL matches url_matches.",
+          "description": "What a probe reads: the output of its commands, the postMessages received so far as JSON, or the body of the latest response whose URL matches url_matches. After the spin, only the postMessages and the responses that came after it are read.",
           "enum": ["page", "messages", "response"],
           "default": "page"
         },
@@ -83,7 +83,7 @@
           "minLength": 1
         },
         "matches": {
-          "description": "Regular expression the probed text must match. Its last match counts, since the postMessages and the requests are listed oldest first. A read keeps its first group, or the whole match when it has none, or the whole text without matches.",
+          "description": "Regular expression the probed text must match. Its last match counts, since the postMessages and the requests are listed oldest first. A read keeps its first group, or for the stake the product of its first two when it has two, such as the coin value and the lines, or the whole match when it has none, or the whole text without matches.",
           "type": "string",
           "minLength": 1
         },
@@ -102,7 +102,7 @@
           "type": "boolean"
         },
         "optional": {
-          "description": "Only for an action that handles what some visits show and others do not, such as the notice of a recent gaming session, the gaming-session form, a cookie banner or the intro screen of the game. When one of its commands fails, the replay skips the rest of the step and goes on.",
+          "description": "Only for an action that handles what some visits show and others do not, such as the notice of a recent gaming session, the gaming-session form or a cookie banner. It needs a command with a target, such as a click on a locator, since a click at coordinates cannot fail. When one of its commands fails, the replay skips the rest of the step and goes on.",
           "type": "boolean"
         }
       }

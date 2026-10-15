@@ -121,6 +121,15 @@ enum Command {
     },
     /// Store every Pragmatic Play game of the catalogue on the dashboard, without testing it
     Sync,
+    /// Check a replay script against the rules a replay follows, as the agent does before it ends
+    CheckScript {
+        /// The script, as `schema/test-script.schema.json` describes it.
+        file: PathBuf,
+
+        /// The mode the script tests.
+        #[arg(long, value_enum)]
+        mode: Mode,
+    },
     /// Check that the harness answers with the chosen model, without running a test
     Ping {
         #[command(flatten)]
@@ -212,6 +221,13 @@ fn run() -> Result<bool> {
             let games = fetch_provider_games(&Http)?;
             db::upsert_games(data_dir, &games)?;
             println!("Stored {} games of {}.", games.len(), catalog::PROVIDER);
+            Ok(true)
+        }
+        Command::CheckScript { file, mode } => {
+            let text = std::fs::read_to_string(&file)
+                .with_context(|| format!("could not read {}", file.display()))?;
+            script::parse(&text, mode)?;
+            println!("The script follows the rules of a replay.");
             Ok(true)
         }
         Command::Ping { agent } => {
