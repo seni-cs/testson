@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "test-script.schema.json",
+  "title": "Replay script",
+  "description": "The playwright-cli commands that tested a game in one mode, written by the agent while it tested, so that testson can run the same test again without an agent while the game keeps the same version. testson opens the browser, restores the login and records the evidence itself: the script starts in the logged-in lobby and holds only what is particular to the game.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["script_version", "mode", "game_version", "steps"],
+  "properties": {
+    "script_version": {
+      "description": "Version of this schema the script follows.",
+      "const": 1
+    },
+    "mode": {
+      "description": "The mode of the test the script replays.",
+      "enum": ["real_money", "no_balance"]
+    },
+    "game_version": {
+      "description": "The build of the game client the script was written for. testson stops the replay before betting when the game loads another one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build_url", "etag"],
+      "properties": {
+        "build_url": {
+          "description": "URL of the build.js of the game client, without its query string.",
+          "type": "string",
+          "format": "uri"
+        },
+        "etag": {
+          "description": "ETag response header of build.js, as sent, quotes included.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "steps": {
+      "description": "What to do, in order, from the logged-in lobby to the end of the round.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "step": {
+      "description": "One thing the replay does or checks.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "description"],
+      "properties": {
+        "role": {
+          "description": "What the step is for, which decides what it may hold and how its failure is read.",
+          "oneOf": [
+            { "const": "action", "description": "Runs its commands, such as a search, a click or the gaming-session form. Only before the spin." },
+            { "const": "spin", "description": "Presses spin once at the minimum stake. At most one per script, exactly one in real_money." },
+            { "const": "pause", "description": "Waits timeout_ms, for an animation that gives no other sign it ended." },
+            { "const": "expect", "description": "Probes until the text matches, within timeout_ms, such as for the game to be ready or for the message a mode expects." },
+            { "const": "read", "description": "Probes until the text matches, within timeout_ms, and keeps the value as the reading in name. balance_after is probed until it is the balance the stake and the win leave." }
+          ]
+        },
+        "description": {
+          "description": "What the step does or checks, in words a person who does not know the test can follow.",
+          "type": "string",
+          "minLength": 1
+        },
+        "commands": {
+          "description": "playwright-cli commands without the session option, each as its arguments, such as [\"click\", \"getByRole('button', { name: 'Jugar' })\"]. Targets are CSS selectors or Playwright locators, never snapshot refs. A probe reads the output of the last one. The only option is --raw, before the command.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        },
+        "source": {
+          "description": "What a probe reads: the output of its commands, the postMessages received so far as JSON, or the body of the latest response whose URL matches url_matches.",
+          "enum": ["page", "messages", "response"],
+          "default": "page"
+        },
+        "url_matches": {
+          "description": "Regular expression the URL of the response must match, for the 'response' source.",
+          "type": "string",
+          "minLength": 1
+        },
+        "matches": {
+          "description": "Regular expression the probed text must match. Its last match counts, since the postMessages and the requests are listed oldest first. A read keeps its first group, or the whole match when it has none, or the whole text without matches.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "Which reading a read step makes. Money is read as the page writes it, such as '12,40 €'.",
+          "enum": ["balance_before", "stake", "win", "balance_after"]
+        },
+        "timeout_ms": {
+          "description": "How long a pause waits, or how long a probe keeps trying. Probes default to 30000.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120000
+        },
+        "screenshot": {
+          "description": "Take a screenshot once the step has run.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

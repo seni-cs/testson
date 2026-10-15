@@ -20,6 +20,21 @@ const MODE_LABELS = {
 // The modes every game is tested in, in the order they are listed.
 const MODES = ["real_money", "no_balance"];
 
+// What drove the browser in a test: the AI agent, or the script an agent run left.
+const RUNNER_LABELS = { agent: "IA", script: "Script" };
+
+// Build the mark of who ran a test.
+function renderRunner(runner) {
+    const mark = element("span", `runner ${runner}`, RUNNER_LABELS[runner]);
+    mark.title = runner === "script" ? "Repetido con el script, sin IA" : "Probado por la IA";
+    return mark;
+}
+
+// The start of an ETag, enough to tell two versions of a game apart.
+function shortVersion(etag) {
+    return etag.replace(/^W\//, "").replaceAll('"', "").slice(0, 8);
+}
+
 // Write the day of a date, as it is in `timeZone` or, without one, where the page is read. A day
 // stored without a time, such as the one a game was added on, belongs to no time zone: it is
 // written in the UTC it is read in, to stay the same day.

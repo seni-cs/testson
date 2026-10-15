@@ -60,7 +60,7 @@ pub struct PageConfig {
     pub jurisdiction: String,
 }
 
-/// HTTP GET used to read the public site.
+/// HTTP requests used to read the public site and the version of a game client.
 pub trait Fetcher {
     /// Fetch `url` with the given request headers.
     ///
@@ -68,6 +68,17 @@ pub trait Fetcher {
     ///
     /// Returns an error when the request fails or the status is not successful.
     fn fetch(&self, url: &str, headers: &[(&str, &str)]) -> Result<Vec<u8>>;
+
+    /// The ETag header the server sends for `url`, asked for with a HEAD request, or `None`
+    /// when it sends none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails or the status is not successful.
+    fn etag(&self, url: &str) -> Result<Option<String>> {
+        let _ = url;
+        Ok(None)
+    }
 }
 
 /// Blocking HTTPS client.
@@ -97,6 +108,24 @@ impl Fetcher for Http {
             .limit(BODY_LIMIT)
             .read_to_vec()
             .map_err(|error| anyhow!("GET {url} failed: {error}"))
+    }
+
+    fn etag(&self, url: &str) -> Result<Option<String>> {
+        let response = shared_agent()
+            .head(url)
+            .header("user-agent", USER_AGENT)
+            .call()
+            .map_err(|error| anyhow!("HEAD {url} failed: {error}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            bail!("HEAD {url} returned HTTP {}", status.as_u16());
+        }
+        Ok(response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+            .filter(|etag| !etag.is_empty()))
     }
 }
 

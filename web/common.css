@@ -149,6 +149,22 @@ main {
     font-weight: 400;
 }
 
+/* Who ran a test: the agent, or the script it left, which costs no model run. */
+.runner {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    flex: none;
+    font-size: var(--font-2xs);
+    font-weight: 700;
+    line-height: 1.4;
+    padding: 0 0.3125rem;
+}
+
+.runner.script {
+    border-color: var(--success);
+    color: var(--success);
+}
+
 /* The box of the image of a game. It is square before the image arrives, and stays in sight if
    it never does. */
 .cover {

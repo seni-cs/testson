@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::catalog::{Fetcher, Game, PROVIDER, fetch_provider_games};
 use crate::db;
-use crate::run::Mode;
+use crate::run::{self, Mode};
 
 /// How many tests of a game in one mode may end without a verdict before the watch stops trying.
 pub const MAX_ATTEMPTS: u32 = 3;
@@ -73,7 +73,11 @@ pub fn parse_interval(value: &str) -> Result<Duration, String> {
 }
 
 /// Stores the games the catalogue has of the provider, and tests each in every mode it has no
-/// verdict in yet.
+/// verdict in yet for the version its provider serves now.
+///
+/// The version is the ETag of the build.js the latest test of the game loaded, asked for again
+/// without a browser, so a game is tested again only when it changed. When it is unknown, as
+/// for a game that has never loaded, any verdict counts.
 ///
 /// `run_one` returns whether that test reached a verdict on the game. A test that did not, such
 /// as one that ended in `test_failed`, is tried again at the next check, until the game has had
@@ -95,17 +99,30 @@ pub fn check(
     db::upsert_games(data_dir, &games)?;
     let mut pending = Vec::new();
     let mut given_up = Vec::new();
+    let mut changed = Vec::new();
     for game in &games {
+        let current = run::current_version(data_dir, fetcher, &game.id)?;
+        let known = db::latest_version(data_dir, &game.id)?;
+        if let (Some(current), Some(known)) = (&current, &known)
+            && current.etag != known.etag
+        {
+            changed.push(game.name.clone());
+        }
+        let etag = current.map(|current| current.etag);
         for mode in Mode::ALL {
-            if db::has_verdict(data_dir, &game.id, mode.as_str())? {
+            if db::has_verdict(data_dir, &game.id, mode.as_str(), etag.as_deref())? {
                 continue;
             }
-            if db::failed_attempts(data_dir, &game.id, mode.as_str())? >= MAX_ATTEMPTS {
+            let attempts = db::failed_attempts(data_dir, &game.id, mode.as_str(), etag.as_deref())?;
+            if attempts >= MAX_ATTEMPTS {
                 given_up.push(format!("{} ({mode})", game.name));
             } else {
-                pending.push((game, mode));
+                pending.push((game, mode, etag.clone()));
             }
         }
+    }
+    if !changed.is_empty() {
+        println!("New versions: {}", changed.join(", "));
     }
     println!("Pending tests: {}", pending.len());
     if !given_up.is_empty() {
@@ -117,16 +134,17 @@ pub fn check(
     }
 
     let mut failed = Vec::new();
-    for (game, mode) in pending {
+    for (game, mode, etag) in pending {
         println!("Testing {} ({mode})", game.name);
         if run_one(game, mode)? {
             println!("Test finished: {} ({mode})", game.name);
         } else {
             // An agent that exited with an error may still have reported a verdict, which counts.
-            let note = if db::has_verdict(data_dir, &game.id, mode.as_str())? {
+            let note = if db::has_verdict(data_dir, &game.id, mode.as_str(), etag.as_deref())? {
                 "its verdict is kept and not retried".to_owned()
             } else {
-                let attempts = db::failed_attempts(data_dir, &game.id, mode.as_str())?;
+                let attempts =
+                    db::failed_attempts(data_dir, &game.id, mode.as_str(), etag.as_deref())?;
                 format!("attempt {attempts} of {MAX_ATTEMPTS}")
             };
             eprintln!("Test did not finish: {} ({mode}), {note}.", game.name);
@@ -147,6 +165,10 @@ mod tests {
     struct Scripted(RefCell<String>);
 
     impl Fetcher for Scripted {
+        fn etag(&self, _url: &str) -> Result<Option<String>> {
+            Ok(Some(ETAG.with_borrow(Clone::clone)))
+        }
+
         fn fetch(&self, url: &str, _headers: &[(&str, &str)]) -> Result<Vec<u8>> {
             let body = if url.contains("/api/") {
                 self.0.borrow().clone()
@@ -210,6 +232,39 @@ mod tests {
         );
         assert!(db::game_exists(dir.path(), "alpha").unwrap());
         assert!(!db::game_exists(dir.path(), "other").unwrap());
+    }
+
+    thread_local! {
+        /// The ETag the server of the provider sends for every build.js.
+        static ETAG: RefCell<String> = RefCell::new("\"v1\"".to_owned());
+    }
+
+    #[test]
+    fn a_new_version_is_tested_again() {
+        let dir = data_dir();
+        let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
+        check(dir.path(), &fetcher, |_, _| Ok(true)).unwrap();
+        for mode in Mode::ALL {
+            let document = serde_json::json!({
+                "mode": mode.as_str(),
+                "status": "working",
+                "started_at": "2026-10-15T10:00:00Z",
+                "game_version": { "build_url": "https://x/build.js", "etag": "\"v1\"" },
+            });
+            db::insert_test(dir.path(), "alpha", &document.to_string()).unwrap();
+        }
+        let tested = |fetcher: &Scripted| {
+            let mut tested = Vec::new();
+            check(dir.path(), fetcher, |_, mode| {
+                tested.push(mode);
+                Ok(true)
+            })
+            .unwrap();
+            tested
+        };
+        assert_eq!(tested(&fetcher), []);
+        ETAG.set("\"v2\"".to_owned());
+        assert_eq!(tested(&fetcher), Mode::ALL);
     }
 
     #[test]

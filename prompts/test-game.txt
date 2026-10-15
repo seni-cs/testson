@@ -21,6 +21,7 @@ echo "[PROGRESS] <short description of what you are about to do>"
 Use descriptions in this spirit, matching what you are actually doing:
 [PROGRESS] Opening target URL
 [PROGRESS] Starting video and trace
+[PROGRESS] Capturing postMessages
 [PROGRESS] Restoring the saved session
 [PROGRESS] Reloading page
 [PROGRESS] Reading account balance
@@ -28,7 +29,9 @@ Use descriptions in this spirit, matching what you are actually doing:
 [PROGRESS] Opening the game in real-money mode
 [PROGRESS] Switching into game iframe
 [PROGRESS] Setting the minimum stake
+[PROGRESS] Reading the game version
 [PROGRESS] Pressing spin once
+[PROGRESS] Writing the replay script
 [PROGRESS] Saving video and trace
 [PROGRESS] Building final JSON report
 
@@ -38,7 +41,7 @@ Hard rules, for every mode:
 - Never use autoplay, quick spin series, "Buy feature", "Comprar bono", "Ante bet", double chance, gamble, or any option that raises the stake above the minimum.
 - Never press the spin control more than the mode allows. A press that the game rejected still counts as a press.
 - Do not invent, refresh, or exfiltrate session tokens. Do not print token values in progress lines or in the report.
-- Do not open, print, or copy session.json or any other session file, and do not type the login into the page. Restore it only by loading session.json as step 3 shows.
+- Do not open, print, or copy session.json or any other session file, and do not type the login into the page. Restore it only by loading session.json as step 3 shows. Never put it, or any token, in script.json.
 - Do not log in through a form, and do not type any credential.
 
 {{MODE_INSTRUCTIONS}}
@@ -57,6 +60,8 @@ Instructions:
    playwright-cli --session {{SESSION_NAME}} resize 1440 900
    playwright-cli --session {{SESSION_NAME}} video-start "{{ASSETS_DIR}}/session.webm"
    playwright-cli --session {{SESSION_NAME}} tracing-start
+   playwright-cli --session {{SESSION_NAME}} run-code --filename '{{OUTPUT_DIR}}/capture-messages.js'
+   The last command makes every page and frame loaded from then on keep the postMessages it receives. Run it before step 3, and do not edit it.
    Snapshot after every navigation and after every action that changes the page. Refs go stale. When a ref is missing, snapshot again.
    On a large page, `playwright-cli --session {{SESSION_NAME}} find "text"` is cheaper than a full snapshot.
    Dismiss cookie consent and age confirmation if they block the lobby (Aceptar, Aceptar todas, Entendido, Soy mayor de 18). Do not dismiss a login wall by typing credentials.
@@ -80,6 +85,10 @@ Instructions:
    - The game client usually loads in an iframe. If the snapshot does not show the game controls, switch into the provider frame. A safe pattern is `run-code` with `page.frames()` or `locator('iframe').contentFrame()`, then locate controls by role and accessible name.
    - Confirm the game is not in demo mode: the balance inside the game must be the account balance, with no "demo", "fun", or play-money mark.
    - Screenshot the loaded game into {{ASSETS_DIR}}/screenshots/ with `screenshot --filename=<absolute path>`.
+   - Read the version of the game client before betting. List its build.js and read the headers of the last one listed:
+     playwright-cli --session {{SESSION_NAME}} requests --static --filter "/build\.js(\?|$)"
+     playwright-cli --session {{SESSION_NAME}} response-headers <number of that request>
+     Keep its URL without the query string as game_version.build_url, and its etag header, exactly as sent with the quotes, as game_version.etag. Omit game_version if no build.js loaded or it has no etag header.
 
 5. Play as this mode says:
    - If you do not know how to play, open the in-game rules or menu first (hamburger, gear, "i", paytable, "reglas", "info", "ayuda"). Read the controls. Screenshot the rules.
@@ -91,6 +100,8 @@ Instructions:
    - playwright-cli --session {{SESSION_NAME}} console warning
    - playwright-cli --session {{SESSION_NAME}} requests
    - Record warning and error console lines and failed requests (HTTP 400-599 or a network failure) on the relevant steps. Omit secrets and cookies from those entries.
+   - playwright-cli --session {{SESSION_NAME}} --raw run-code --filename '{{OUTPUT_DIR}}/collect-messages.js'
+     It prints, as a JSON array, the postMessages the lobby and its frames received, with tokens redacted. Copy that array as post_messages, unchanged. Use an empty array if it prints nothing.
    - Read the user agent with `playwright-cli --session {{SESSION_NAME}} --raw eval "() => navigator.userAgent"` and the viewport with `() => ({ width: window.innerWidth, height: window.innerHeight })`.
 
 7. Always stop recording and close the browser, including on failure:
@@ -102,6 +113,25 @@ Instructions:
 
 8. Compute duration_ms from the start timestamp.
 
+Replay script:
+testson replays the test you leave in {{OUTPUT_DIR}}/script.json, without an agent, while the game keeps the build.js ETag you read, so that later tests of this version cost no model run. Write it as you go: once a command did what you meant, add it. Write it only when this run is "working" and you read game_version; otherwise do not write the file.
+
+The replay opens the target, starts the video, captures the postMessages, restores the login and reloads, as steps 2 and 3 do, and collects the evidence of step 6 itself. Do not put those in the script: it starts in the logged-in lobby, and ends when the last check of the mode passed. Before the spin, the replay checks the version of build.js, and that the stake read is above zero, at most 1 € and, with real money, at most the balance. It stops before betting if any of these fails.
+
+The file must validate against this JSON Schema:
+
+{{SCRIPT_SCHEMA}}
+
+Write it this way:
+- Use only commands that worked in this run, in the order you ran them, without `--session`. Never use snapshot refs such as e12 as targets: they change at every run. Use the CSS selector or Playwright locator that `generate-locator <ref>` gives, such as "getByRole('button', { name: 'Jugar' })", or `mousemove`/`mousedown`/`mouseup` with the coordinates you used at 1440×900 for a canvas.
+- The allowed commands are goto, reload, click, dblclick, fill, type, press, select, check, uncheck, hover, mousemove, mousedown, mouseup, mousewheel, dialog-accept and dialog-dismiss in "action" and "spin" steps, and find and eval in any step. Only the spin may press Space. The only option is --raw, before the command. An eval only reads, such as "() => document.querySelector('.balance')?.textContent". It never clicks, assigns, loops or waits. No command may name the cashier, deposits, demo play, bonuses or buy features.
+- The first step reads balance_before in the lobby, before any action. Then come the actions that find and open the game and fill the gaming-session form. A typed number is never above 5.
+- After the game loads, add an "expect" that shows it is ready, and a "read" of the stake at the minimum. Then add the one "spin" step. Nothing after it may act: only "pause", "expect" and "read". Read the win, if any, before balance_after: testson keeps reading balance_after until it is the balance the stake and the win leave.
+- A probe reads its "source": the output of its commands ("page"), the postMessages received so far as a JSON array ("messages"), or the body of the latest response whose URL matches "url_matches" ("response"). The game draws on a canvas, so the page often cannot show its balance or its messages: prefer a postMessage or a response of the game server that carries them, such as a balance field in the response to the spin request, when you saw one in this run.
+- Give "matches" a regular expression that holds on what you saw in this run, and that also holds on later runs: match the shape of a value, not the value. Its last match counts, so a probe of the postMessages reads the newest one. A read keeps the first group of its match, such as "balance\":\s*\"?([\d.,]+)".
+- Give each step a "description" a person can follow, and set "screenshot" on the steps worth seeing.
+- Set "mode" to "{{MODE}}" and "game_version" to the one you read.
+
 Final output:
 Your last message must be one JSON object and nothing else. No markdown, no code fence, and no text before or after it. Progress lines belong in the shell, not in this message.
 
@@ -110,7 +140,7 @@ The object must validate against this JSON Schema. Do not add properties the sch
 {{SCHEMA}}
 
 Fill it this way:
-- Set "mode" to "{{MODE}}".
+- Set "mode" to "{{MODE}}" and "runner" to "agent". Never set script_id or script_outcome.
 - Use status "working" only when every expected criterion of this mode passed. Use "failing" when the game did not meet them. Use "test_failed" only as described above.
 - Include "error" with a "message" only when status is "test_failed". Omit "error" when status is "working" or "failing".
 - Set balance_before and balance_after to the balances as the page wrote them, currency included. Omit one you could not read. Do not use empty strings.
@@ -118,14 +148,16 @@ Fill it this way:
 - A step with status "failed" must include "error". Omit "error" on steps that passed or were skipped.
 - video_path and screenshot path are URL paths under {{DATA_PREFIX}}, not filesystem paths. video_path is {{DATA_PREFIX}}/session.webm. A screenshot path is {{DATA_PREFIX}}/screenshots/<filename>. Omit video_path when the browser never started or no video file exists. Do not use empty strings.
 - Never set trace_path. The trace holds the session and stays private.
+- Set game_version to the version you read in step 4, and post_messages to the array of step 6.
 - A failed request needs "url" and "method", plus "status_code" (an integer from 400 to 599) or "failure". Do not use status_code 0.
 - Use empty arrays when a step has no screenshots, console messages, or failed requests.
 
 Example shape for a working run. Replace every angle-bracket placeholder with this run's real values. Do not copy the sample status if the run did not pass.
 
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "mode": "{{MODE}}",
+  "runner": "agent",
   "game_url": "<url of the game or the page where it was launched>",
   "status": "working",
   "summary": "<1-2 sentences: what was tested, in which mode, and why it received this status>",
@@ -134,6 +166,8 @@ Example shape for a working run. Replace every angle-bracket placeholder with th
   "balance_before": "<balance as the page wrote it before the bet>",
   "balance_after": "<balance as the page wrote it after the round or the refused bet>",
   "video_path": "{{DATA_PREFIX}}/session.webm",
+  "game_version": { "build_url": "<url of build.js without its query string>", "etag": "<etag header of build.js, as sent>" },
+  "post_messages": [],
   "steps": [
     {
       "action": "goto",
@@ -157,4 +191,4 @@ Example shape for a working run. Replace every angle-bracket placeholder with th
   }
 }
 
-Before you return, check that you pressed spin no more times than this mode allows, at the minimum stake, and that you never opened the cashier. Close the browser even if you are about to return "failing" or "test_failed".
+Before you return, check that you pressed spin no more times than this mode allows, at the minimum stake, and that you never opened the cashier. If you wrote script.json, check that it holds one spin at most, no command you did not run, and nothing of the login. Close the browser even if you are about to return "failing" or "test_failed".

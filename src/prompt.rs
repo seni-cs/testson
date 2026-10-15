@@ -8,6 +8,11 @@ pub const TEMPLATE: &str = include_str!("../prompts/test-game.txt");
 /// The prompt of `testson login`, which logs in to one account and leaves the browser open.
 pub const LOGIN_TEMPLATE: &str = include_str!("../prompts/login.txt");
 pub const REPORT_SCHEMA: &str = include_str!("../schema/test-game.schema.json");
+pub const SCRIPT_SCHEMA: &str = include_str!("../schema/test-script.schema.json");
+/// Written to each run directory: the agent and the replay run them to capture the postMessages
+/// of the page and read them back.
+pub const CAPTURE_MESSAGES: &str = include_str!("../prompts/capture-messages.js");
+pub const COLLECT_MESSAGES: &str = include_str!("../prompts/collect-messages.js");
 /// The rules and criteria of each mode, put into the template at `{{MODE_INSTRUCTIONS}}`.
 pub const REAL_MONEY_INSTRUCTIONS: &str = include_str!("../prompts/real-money.txt");
 pub const NO_BALANCE_INSTRUCTIONS: &str = include_str!("../prompts/no-balance.txt");
@@ -122,6 +127,7 @@ pub fn fill_template(template: &str, values: TemplateValues<'_>) -> Result<Strin
         ("SESSION_NAME", values.session_name),
         ("DATA_PREFIX", values.data_prefix),
         ("SCHEMA", REPORT_SCHEMA.trim_end_matches('\n')),
+        ("SCRIPT_SCHEMA", SCRIPT_SCHEMA.trim_end_matches('\n')),
     ];
     fill(template, &pairs)
 }
@@ -220,7 +226,7 @@ mod tests {
     #[test]
     fn fill_requires_every_placeholder() {
         let filled = fill_template(
-            "{{GAME_NAME}}|{{MODE}}|{{MODE_INSTRUCTIONS}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{SCHEMA}}",
+            "{{GAME_NAME}}|{{MODE}}|{{MODE_INSTRUCTIONS}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{SCHEMA}}|{{SCRIPT_SCHEMA}}",
             VALUES,
         )
         .unwrap();
@@ -244,6 +250,7 @@ mod tests {
             let filled = fill_template(TEMPLATE, values).unwrap();
             assert!(!filled.contains("{{"));
             assert!(filled.contains("\"schema_version\""));
+            assert!(filled.contains("\"script_version\""));
             assert!(filled.contains(instructions.trim_end()));
         }
     }

@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "test-game.schema.json",
   "title": "Game test",
-  "description": "The result of one run of the standard Playwright test against a game. Which game it ran against is stored beside the document, not in it.",
+  "description": "The result of one run of a game test, by the agent or by the replay script an agent left. Which game it ran against is stored beside the document, not in it.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "mode",
+    "runner",
     "status",
     "summary",
     "started_at",
@@ -16,8 +17,8 @@
   ],
   "properties": {
     "schema_version": {
-      "description": "Version of this schema the document follows. Version 1 had no mode: its tests were played in demo mode.",
-      "const": 2
+      "description": "Version of this schema the document follows. Version 1 had no mode: its tests were played in demo mode. Version 2 had no runner: the agent ran all its tests.",
+      "const": 3
     },
     "mode": {
       "description": "Which account the test played with, and so what it checked.",
@@ -29,6 +30,45 @@
         {
           "const": "no_balance",
           "description": "An account without balance: the game launches in real-money mode, and trying to bet shows that the balance is not enough."
+        }
+      ]
+    },
+    "runner": {
+      "description": "What drove the browser. testson sets it, not the agent.",
+      "oneOf": [
+        {
+          "const": "agent",
+          "description": "An AI agent tested the game and reported what it found."
+        },
+        {
+          "const": "script",
+          "description": "testson replayed, without an agent, the script an earlier agent run left for this version of the game."
+        }
+      ]
+    },
+    "script_id": {
+      "description": "The number of the script that was replayed. Present only when the runner is 'script'.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "script_outcome": {
+      "description": "How far the replay got. Present only when the runner is 'script'.",
+      "oneOf": [
+        {
+          "const": "completed",
+          "description": "Every step of the script ran, so the status is a verdict on the game."
+        },
+        {
+          "const": "step_failed",
+          "description": "A step of the script could not run: the script no longer fits the game, and the agent tests it again."
+        },
+        {
+          "const": "version_changed",
+          "description": "The game loaded a build.js with another ETag than the one the script was written for, so the replay stopped before betting and the agent tests it again."
+        },
+        {
+          "const": "blocked",
+          "description": "A check of the account or the stake stopped the replay before betting, such as an expired session or a stake above 1 €. The agent would be stopped the same way."
         }
       ]
     },
@@ -89,6 +129,12 @@
       "type": "string",
       "minLength": 1
     },
+    "game_version": { "$ref": "#/$defs/game_version" },
+    "post_messages": {
+      "description": "Messages the windows of the page posted to each other, such as the lobby and the game client, in the order they were received.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/post_message" }
+    },
     "steps": {
       "description": "The timeline of the test: every step it is made of, in execution order, with the evidence captured during it.",
       "type": "array",
@@ -107,6 +153,55 @@
   "then": { "required": ["error"] },
   "else": { "not": { "required": ["error"] } },
   "$defs": {
+    "game_version": {
+      "description": "Which build of the game client the test was run on: the ETag the server of the provider sends with its build.js, as testson read it before the run, or as the browser loaded it when testson could not.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build_url", "etag"],
+      "properties": {
+        "build_url": {
+          "description": "URL of the build.js of the game client, without its query string.",
+          "type": "string",
+          "format": "uri"
+        },
+        "etag": {
+          "description": "ETag response header of build.js, as sent, quotes included.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "post_message": {
+      "description": "One message a window of the page posted to another, with whatever looks like a token redacted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "direction", "data"],
+      "properties": {
+        "at": {
+          "description": "When it was received.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "direction": {
+          "description": "Which window received it.",
+          "oneOf": [
+            { "const": "to_lobby", "description": "The lobby page received it, usually from the game client." },
+            { "const": "to_frame", "description": "A frame of the page, usually the game client, received it." }
+          ]
+        },
+        "origin": {
+          "description": "Origin of the window that posted it.",
+          "type": "string"
+        },
+        "frame_url": {
+          "description": "URL of the window that received it, without its query string.",
+          "type": "string"
+        },
+        "data": {
+          "description": "What was posted, as JSON."
+        }
+      }
+    },
     "step": {
       "description": "One thing the test does or checks, its outcome and the evidence captured during it.",
       "type": "object",
