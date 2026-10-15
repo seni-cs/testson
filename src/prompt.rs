@@ -252,4 +252,43 @@ mod tests {
             assert!(filled.contains(instructions.trim_end()));
         }
     }
+
+    /// Runs collect-messages.js with node against a page whose frame received `messages`.
+    fn collect(messages: &serde_json::Value) -> String {
+        let script = format!(
+            "const collect = {COLLECT_MESSAGES};\n\
+             const received = {messages};\n\
+             const frame = {{\n  \
+               evaluate: async () => received.map((data, i) => ({{ at: String(i), origin: 'o', data }})),\n  \
+               url: () => 'https://game.example/index.html',\n\
+             }};\n\
+             collect({{ frames: () => [frame], mainFrame: () => frame }})\n  \
+               .then((collected) => console.log(JSON.stringify(collected.map((m) => m.data))));\n"
+        );
+        let output = std::process::Command::new("node")
+            .args(["-e", &script])
+            .output()
+            .expect("node runs, as playwright-cli needs it");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    #[test]
+    fn tokens_are_redacted_in_messages_sent_as_json_text() {
+        let collected = collect(&serde_json::json!([
+            r#"{"type":"init","token":"t-1","nested":{"sessionId":"s-2","ok":1}}"#,
+            { "text": r#"{"jwt":"j-3","value":2}"#, "authKey": "k-4" },
+            "plain text",
+            "[1, 2",
+        ]));
+        for secret in ["t-1", "s-2", "j-3", "k-4"] {
+            assert!(!collected.contains(secret), "{secret} leaked: {collected}");
+        }
+        assert!(collected.contains(r#"\"ok\":1"#), "{collected}");
+        assert!(collected.contains("plain text") && collected.contains("[1, 2"));
+    }
 }

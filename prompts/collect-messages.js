@@ -5,9 +5,23 @@ async (page) => {
   const secretKey = /token|session|auth|key|pass|secret|ticket|jwt|cookie|signature/i;
   const secretValue = /^[A-Za-z0-9+/=._-]{32,}$/;
   const withoutQuery = (text) => text.replace(/^(https?:\/\/[^?#\s]*)[?#]\S*$/, "$1");
+  // Many games post their messages as JSON text, whose keys need the same redaction.
+  const parsed = (text) => {
+    if (!/^\s*[[{]/.test(text)) {
+      return undefined;
+    }
+    try {
+      const value = JSON.parse(text);
+      return value !== null && typeof value === "object" ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const redact = (value, depth) => {
     if (typeof value === "string") {
-      const text = withoutQuery(value);
+      const json = parsed(value);
+      const text =
+        json === undefined ? withoutQuery(value) : JSON.stringify(redact(json, depth));
       if (secretValue.test(text)) {
         return "[redacted]";
       }
