@@ -8,12 +8,16 @@ use serde_json::Value;
 const COMMAND_PREVIEW: usize = 200;
 
 /// What one stream line contributes.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Event {
     /// Lines to show the operator. Empty for events with nothing worth showing.
     Show(Vec<String>),
-    /// The run finished with this final answer.
-    Result { text: String, is_error: bool },
+    /// The run finished with this final answer, and what it cost when the CLI says.
+    Result {
+        text: String,
+        is_error: bool,
+        cost_usd: Option<f64>,
+    },
 }
 
 /// Interprets one stdout line. A line that is not a stream event is shown as it is.
@@ -41,6 +45,7 @@ pub fn parse(line: &str) -> Event {
                 .get("is_error")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            cost_usd: event.get("total_cost_usd").and_then(Value::as_f64),
         },
         Some(_) => Event::Show(Vec::new()),
         None => Event::Show(vec![line.to_owned()]),
@@ -133,7 +138,16 @@ mod tests {
             parse(r#"{"type":"result","is_error":false,"result":"{\"ok\":1}"}"#),
             Event::Result {
                 text: r#"{"ok":1}"#.into(),
-                is_error: false
+                is_error: false,
+                cost_usd: None,
+            }
+        );
+        assert_eq!(
+            parse(r#"{"type":"result","is_error":true,"result":"no","total_cost_usd":0.25}"#),
+            Event::Result {
+                text: "no".into(),
+                is_error: true,
+                cost_usd: Some(0.25),
             }
         );
         assert_eq!(

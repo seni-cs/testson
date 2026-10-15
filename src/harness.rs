@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,24 @@ const PING_TIMEOUT: Duration = Duration::from_secs(120);
 const PING_OUTPUT_LINES: usize = 15;
 /// How long output is still read after the CLI exits.
 const OUTPUT_GRACE: Duration = Duration::from_secs(2);
+
+/// What the agent runs of this process cost, in US dollars, as the CLIs reported it.
+static SPENT_USD: Mutex<f64> = Mutex::new(0.0);
+
+/// What the agent runs of this process cost so far, in US dollars. Only the CLIs that report a
+/// cost, claude among them, add to it.
+#[must_use]
+pub fn spent_usd() -> f64 {
+    *SPENT_USD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn add_spent(cost: f64) {
+    *SPENT_USD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) += cost;
+}
 
 /// An agent CLI that runs a prompt non-interactively.
 #[allow(
@@ -158,17 +176,26 @@ impl Agent {
     pub fn ping(&self) -> Result<()> {
         let scratch = tempfile::tempdir().context("could not create a temporary directory")?;
         let mut output = String::new();
+        let mut result = None;
         let run = self.execute(
             PING_PROMPT,
             scratch.path(),
             false,
             PING_TIMEOUT,
             |_, line| {
+                if let events::Event::Result { text, cost_usd, .. } = events::parse(&line) {
+                    add_spent(cost_usd.unwrap_or_default());
+                    result = Some(text);
+                }
                 output.push_str(&line);
                 output.push('\n');
             },
         )?;
-        let answer = run.last_message.as_deref().unwrap_or(&output);
+        let answer = run
+            .last_message
+            .as_deref()
+            .or(result.as_deref())
+            .unwrap_or(&output);
         let problem = match run.exit_code {
             None => format!("did not answer within {}s", PING_TIMEOUT.as_secs()),
             Some(code) if code != 0 => format!("exited with status {code}"),
@@ -209,14 +236,23 @@ impl Agent {
             let lines = match events::parse(&line) {
                 _ if !(streams && from_stdout) => vec![line],
                 events::Event::Show(lines) => lines,
-                events::Event::Result { text, is_error } => {
+                events::Event::Result {
+                    text,
+                    is_error,
+                    cost_usd,
+                } => {
                     let shown = if is_error {
                         format!("agent error: {text}")
                     } else {
                         text.clone()
                     };
                     result = Some(text);
-                    vec![shown]
+                    let mut lines = vec![shown];
+                    if let Some(cost) = cost_usd {
+                        add_spent(cost);
+                        lines.push(format!("# model cost: ${cost:.4}"));
+                    }
+                    lines
                 }
             };
             for line in lines {
@@ -317,6 +353,9 @@ impl Agent {
                 if autonomous {
                     command.args(["--permission-mode", "bypassPermissions"]);
                     command.args(["--output-format", "stream-json", "--verbose"]);
+                } else {
+                    // One JSON result, which reports the cost of the ping.
+                    command.args(["--output-format", "json"]);
                 }
                 if let Some(model) = &self.model {
                     command.arg("--model").arg(model);

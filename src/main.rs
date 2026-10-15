@@ -13,14 +13,14 @@ mod watch;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use tokio::net::TcpListener;
 
 use crate::catalog::{DEFAULT_CASINO_URL, Http, fetch_provider_games, find_game};
-use crate::harness::{Agent, Harness};
+use crate::harness::{Agent, Harness, spent_usd};
 use crate::login::Browser;
 use crate::prompt::{parse_betsson_url, slugify};
 use crate::run::{Mode, Runner};
@@ -118,9 +118,6 @@ enum Command {
         /// with `--cdp`, so `TESTSON_CHROME` may stay set.
         #[arg(long, env = "TESTSON_CHROME", value_name = "PATH")]
         chrome: Option<PathBuf>,
-
-        #[command(flatten)]
-        agent: AgentArgs,
     },
     /// Store every Pragmatic Play game of the catalogue on the dashboard, without testing it
     Sync,
@@ -138,6 +135,14 @@ enum Command {
         /// Repeat the check at this interval, for example 30m. Minimum 60s.
         #[arg(long, value_name = "INTERVAL", value_parser = parse_interval)]
         every: Option<Duration>,
+
+        /// Test at most this many games per check, the games new to the dashboard first.
+        #[arg(long, value_name = "GAMES")]
+        limit: Option<usize>,
+
+        /// Path of the Chrome program a login starts. Found in the usual places by default.
+        #[arg(long, env = "TESTSON_CHROME", value_name = "PATH")]
+        chrome: Option<PathBuf>,
 
         #[command(flatten)]
         runner: RunnerArgs,
@@ -162,6 +167,7 @@ fn main() -> ExitCode {
 fn run() -> Result<bool> {
     let cli = Cli::parse();
     let data_dir = cli.data_dir.as_path();
+    let started = Instant::now();
     match cli.command {
         Command::Serve => {
             let runtime = tokio::runtime::Runtime::new()?;
@@ -176,22 +182,21 @@ fn run() -> Result<bool> {
             agent,
         } => {
             let modes = mode.map_or(Mode::ALL.to_vec(), |mode| vec![mode]);
-            test(data_dir, &game, &url, &modes, &agent.agent(), runner.runner)
+            let passed = test(data_dir, &game, &url, &modes, &agent.agent(), runner.runner);
+            print_totals(started);
+            passed
         }
         Command::Login {
             mode,
             url,
             cdp,
             chrome,
-            agent,
         } => {
-            let agent = agent.agent();
-            login::ensure_tools(&agent)?;
             let browser = cdp.map_or(Browser::Launch(chrome), Browser::Attach);
             let mut passed = true;
             // One account failing does not keep the other from logging in.
             for mode in mode.map_or(Mode::ALL.to_vec(), |mode| vec![mode]) {
-                match login::login(data_dir, mode, &url, &browser, &agent) {
+                match login::login(data_dir, mode, &url, &browser) {
                     Ok(logged_in) => passed &= logged_in,
                     Err(error) => {
                         eprintln!("error: {mode}: {error:#}");
@@ -199,6 +204,7 @@ fn run() -> Result<bool> {
                     }
                 }
             }
+            print_totals(started);
             Ok(passed)
         }
         Command::Sync => {
@@ -224,21 +230,27 @@ fn run() -> Result<bool> {
         Command::Watch {
             every,
             runner,
+            limit,
+            chrome,
             agent,
             ..
         } => {
             let runner = runner.runner;
             let agent = agent.agent();
+            let browser = Browser::Launch(chrome);
             db::setup(data_dir)?;
             let _lock = WatchLock::acquire(data_dir)?;
             let Some(every) = every else {
-                check(data_dir, &agent, runner)?;
+                let checked = check(data_dir, &agent, runner, limit, &browser);
+                print_totals(started);
+                checked?;
                 return Ok(true);
             };
             loop {
-                if let Err(error) = check(data_dir, &agent, runner) {
+                if let Err(error) = check(data_dir, &agent, runner, limit, &browser) {
                     eprintln!("error: {error:#}");
                 }
+                print_totals(started);
                 println!("Next check in {}s", every.as_secs());
                 thread::sleep(every);
             }
@@ -308,9 +320,23 @@ fn test(
     Ok(passed)
 }
 
-fn check(data_dir: &Path, agent: &Agent, runner: Runner) -> Result<()> {
-    watch::check(data_dir, &Http, |game, mode| {
-        let tested = run::test_game(
+/// One check of the watch. It logs in to the account of a mode when its session is missing, and
+/// when a test says the session expired, which it then tests again.
+fn check(
+    data_dir: &Path,
+    agent: &Agent,
+    runner: Runner,
+    limit: Option<usize>,
+    browser: &Browser,
+) -> Result<()> {
+    let log_in = |mode: Mode| {
+        if !login::login(data_dir, mode, DEFAULT_CASINO_URL, browser)? {
+            anyhow::bail!("could not log in to the {mode} account");
+        }
+        Ok(())
+    };
+    let test = |game: &catalog::Game, mode: Mode| {
+        run::test_game(
             data_dir,
             &Http,
             game,
@@ -318,9 +344,32 @@ fn check(data_dir: &Path, agent: &Agent, runner: Runner) -> Result<()> {
             mode,
             agent,
             runner,
-        )?;
-        Ok(tested.finished())
+        )
+    };
+    watch::check(data_dir, &Http, limit, |game, mode| {
+        if !data_dir.join(mode.session_file()).is_file() {
+            println!("No saved session for {mode}. Logging in.");
+            log_in(mode)?;
+        }
+        let outcome = test(game, mode)?;
+        if !outcome.needs_login() {
+            return Ok(outcome.finished());
+        }
+        println!("The session of {mode} expired. Logging in and testing again.");
+        log_in(mode)?;
+        Ok(test(game, mode)?.finished())
     })
+}
+
+/// Prints how long the command has run and what its agent runs cost.
+fn print_totals(started: Instant) {
+    let seconds = started.elapsed().as_secs();
+    println!(
+        "Total: {}m {:02}s, model cost ${:.4}",
+        seconds / 60,
+        seconds % 60,
+        spent_usd()
+    );
 }
 
 fn non_empty(value: &str) -> Result<String, String> {

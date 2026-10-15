@@ -53,9 +53,10 @@ the binary, so restart it after each edit to them.
   path. `testson login` runs in Google Chrome, reached over its DevTools port, because Betsson
   blocks the login in the browser Playwright launches, with
   `--disable-blink-features=AutomationControlled`, without which the port alone sets
-  `navigator.webdriver` and Betsson's fraud check refuses the login; the credentials reach `playwright-cli` as
-  secrets the agent types by name and never sees, and the file that holds them is removed before
-  the agent starts. `run-code` prints the code it runs, so never put a secret in a script.
+  `navigator.webdriver` and Betsson's fraud check refuses the login. The login takes no agent:
+  testson runs the scripts in `scripts/` with `run-code`, and types the credentials with `fill` as
+  `playwright-cli` secrets, so no output or file holds them; the file that holds them is removed
+  before the first step. `run-code` prints the code it runs, so never put a secret in a script.
 - The agent never plays in demo mode, never deposits, withdraws or opens the cashier, and presses
   spin once per test at the minimum stake, never above 1 €. The no-balance test never bets on an
   account with balance. The only limit it sets is the gaming session Spanish rules require before
