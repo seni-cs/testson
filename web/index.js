@@ -1,24 +1,34 @@
 // What each status of a game means, in the order the legend and the filters list them.
 const STATUS_MEANINGS = {
-    working: "El último test completó todos sus pasos.",
-    failing: "En el último test el juego no se comportó como se esperaba.",
-    test_failed: "El último test no pudo completarse, así que no dice nada sobre el juego.",
-    untested: "Todavía no se ha ejecutado ningún test.",
+    working: "Los últimos tests con dinero real y sin saldo completaron todos sus pasos.",
+    failing: "En alguno de los últimos tests el juego no se comportó como se esperaba.",
+    test_failed: "Alguno de los últimos tests no pudo completarse, así que no dice nada sobre el juego.",
+    untested: "Todavía falta alguno de los dos tests.",
 };
 
+// The statuses from the one that most needs looking at to the one that least does.
+const SEVERITY = ["failing", "test_failed", "untested", "working"];
+
+// A game stands where the latest test of each mode left it, whatever the earlier ones found, and
+// is filtered by the status of the two that most needs looking at.
+function gameStatus(game) {
+    const statuses = MODES.map((mode) => game[mode]?.status ?? "untested");
+    return SEVERITY.find((status) => statuses.includes(status));
+}
+
 function renderGame(game) {
-    // A game stands where its latest test left it, whatever the earlier ones found.
-    const status = game.status ?? "untested";
     const card = element("a", "card game");
     card.href = `/game/${game.id}`;
-    card.dataset.status = status;
-
-    const tested = game.tested_at ? formatDay(game.tested_at) : "Nunca";
+    card.dataset.status = gameStatus(game);
 
     const facts = element("dl");
     facts.append(
-        renderFact("Último test", renderLabelledDot(status), tested),
-        renderFact("Añadido", formatDay(game.added_on, "UTC")),
+        ...MODES.map((mode) => {
+            const latest = game[mode];
+            const status = latest?.status ?? "untested";
+            const tested = latest ? formatDay(latest.started_at) : "Nunca";
+            return renderFact(MODE_LABELS[mode], renderLabelledDot(status), tested);
+        }),
     );
     const about = element("div", "about");
     about.append(element("h2", "", game.name), facts);

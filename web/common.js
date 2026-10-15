@@ -9,6 +9,17 @@ const STATUS_LABELS = {
     untested: "Sin testear",
 };
 
+// The account a test played with. Tests from before there were two accounts were played in demo
+// mode.
+const MODE_LABELS = {
+    real_money: "Dinero real",
+    no_balance: "Sin saldo",
+    demo: "Demo",
+};
+
+// The modes every game is tested in, in the order they are listed.
+const MODES = ["real_money", "no_balance"];
+
 // Write the day of a date, as it is in `timeZone` or, without one, where the page is read. A day
 // stored without a time, such as the one a game was added on, belongs to no time zone: it is
 // written in the UTC it is read in, to stay the same day.

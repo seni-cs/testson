@@ -4,6 +4,10 @@ function formatDateTime(timestamp) {
     return new Date(timestamp).toLocaleString(LOCALE, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function formatShortDateTime(timestamp) {
+    return new Date(timestamp).toLocaleString(LOCALE, { dateStyle: "short", timeStyle: "short" });
+}
+
 function formatDuration(milliseconds) {
     const seconds = (milliseconds / 1000).toLocaleString(LOCALE, {
         minimumFractionDigits: 1,
@@ -253,7 +257,7 @@ async function showTest(test) {
     const title = element("div", "test-title");
     title.append(
         renderLabelledDot(test.status),
-        element("h2", "", formatDateTime(test.started_at)),
+        element("h2", "", `${MODE_LABELS[test.mode]} · ${formatDateTime(test.started_at)}`),
     );
     shownTestId = test.id;
     requests += 1;
@@ -279,7 +283,8 @@ function renderTestLink(test) {
     const link = element("a", "test-link");
     link.href = testHash(test);
     link.append(
-        element("span", "", formatDateTime(test.started_at)),
+        element("span", "", MODE_LABELS[test.mode]),
+        element("span", "when", formatShortDateTime(test.started_at)),
         renderLabelledDot(test.status),
     );
     return link;

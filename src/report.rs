@@ -16,16 +16,26 @@ use serde_json::Value;
 #[serde(deny_unknown_fields)]
 struct Report {
     schema_version: u64,
+    mode: Mode,
     status: Status,
     summary: String,
     game_url: Option<String>,
     started_at: String,
     duration_ms: u64,
+    balance_before: Option<String>,
+    balance_after: Option<String>,
     video_path: Option<String>,
     trace_path: Option<String>,
     steps: Vec<Step>,
     error: Option<Error>,
     environment: Option<Environment>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Mode {
+    RealMoney,
+    NoBalance,
 }
 
 #[derive(Deserialize, PartialEq, Eq)]
@@ -129,11 +139,13 @@ struct Viewport {
 /// Fails, naming the field, at the first place where it does not.
 pub fn validate(report: &Value) -> Result<()> {
     let report = Report::deserialize(report)?;
-    ensure!(report.schema_version == 1, "schema_version must be 1");
+    ensure!(report.schema_version == 2, "schema_version must be 2");
     non_empty("summary", &report.summary)?;
     date_time("started_at", &report.started_at)?;
     for (name, value) in [
         ("game_url", &report.game_url),
+        ("balance_before", &report.balance_before),
+        ("balance_after", &report.balance_after),
         ("video_path", &report.video_path),
         ("trace_path", &report.trace_path),
     ] {
@@ -212,18 +224,21 @@ mod tests {
 
     fn report() -> Value {
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
+            "mode": "no_balance",
             "status": "failing",
-            "summary": "No demo mode.",
+            "summary": "No insufficient-balance message.",
             "game_url": "https://www.betsson.es/casino",
             "started_at": "2026-10-12T10:00:00.000Z",
             "duration_ms": 1200,
+            "balance_before": "0,00 €",
+            "balance_after": "0,00 €",
             "video_path": "/data/assets/x/session.webm",
             "steps": [{
                 "action": "click",
-                "description": "Clicked the demo control",
+                "description": "Pressed spin once",
                 "status": "failed",
-                "error": { "message": "No demo control" },
+                "error": { "message": "No message appeared" },
                 "screenshots": [{ "path": "/data/assets/x/screenshots/1.png", "caption": "Lobby" }],
                 "console_messages": [{ "level": "error", "text": "boom", "source_url": "https://x" }],
                 "failed_requests": [{ "url": "https://x", "method": "GET", "status_code": 404 }]
@@ -244,7 +259,10 @@ mod tests {
     #[test]
     fn rejects_what_the_schema_does_not_allow() {
         for (pointer, value) in [
-            ("/schema_version", json!(2)),
+            ("/schema_version", json!(1)),
+            ("/mode", json!("demo")),
+            ("/mode", Value::Null),
+            ("/balance_before", json!("")),
             ("/status", json!("passed")),
             ("/summary", json!("")),
             ("/started_at", json!("yesterday")),

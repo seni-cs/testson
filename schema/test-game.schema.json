@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "required": [
     "schema_version",
+    "mode",
     "status",
     "summary",
     "started_at",
@@ -15,8 +16,21 @@
   ],
   "properties": {
     "schema_version": {
-      "description": "Version of this schema the document follows.",
-      "const": 1
+      "description": "Version of this schema the document follows. Version 1 had no mode: its tests were played in demo mode.",
+      "const": 2
+    },
+    "mode": {
+      "description": "Which account the test played with, and so what it checked.",
+      "oneOf": [
+        {
+          "const": "real_money",
+          "description": "An account with balance: the game launches in real-money mode and one round is played for real money at the minimum stake."
+        },
+        {
+          "const": "no_balance",
+          "description": "An account without balance: the game launches in real-money mode, and trying to bet shows that the balance is not enough."
+        }
+      ]
     },
     "status": {
       "description": "What the run found out about the game.",
@@ -54,6 +68,16 @@
       "description": "Total duration of the test in milliseconds.",
       "type": "integer",
       "minimum": 0
+    },
+    "balance_before": {
+      "description": "Account balance shown before the first bet was tried, as written on the page, such as '12,40 €'.",
+      "type": "string",
+      "minLength": 1
+    },
+    "balance_after": {
+      "description": "Account balance shown once the round settled or the bet was refused, as written on the page.",
+      "type": "string",
+      "minLength": 1
     },
     "video_path": {
       "description": "URL path the session recording is served at, such as '/data/...'. Absent if the browser never started.",

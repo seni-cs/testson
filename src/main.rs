@@ -17,9 +17,10 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use tokio::net::TcpListener;
 
-use crate::catalog::{DEFAULT_CASINO_URL, Http, fetch_novedades, find_game};
+use crate::catalog::{DEFAULT_CASINO_URL, Http, fetch_provider_games, find_game};
 use crate::harness::{Agent, Harness};
 use crate::prompt::{parse_betsson_url, slugify};
+use crate::run::Mode;
 use crate::watch::{WatchLock, parse_interval};
 
 const ADDRESS: &str = "127.0.0.1:8000";
@@ -30,7 +31,7 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 
-    /// Directory that holds the database, the assets, the runs, and session-block.txt.
+    /// Directory that holds the database, the assets, the runs, and the session files.
     #[arg(
         long,
         global = true,
@@ -66,7 +67,7 @@ impl AgentArgs {
 enum Command {
     /// Start the dashboard
     Serve,
-    /// Test one game in demo mode and store the result
+    /// Test one game with real money and without balance, and store the results
     Test {
         /// Name of the game, as shown in the lobby.
         #[arg(value_parser = non_empty)]
@@ -76,17 +77,23 @@ enum Command {
         #[arg(long, default_value = DEFAULT_CASINO_URL, value_parser = parse_betsson_url)]
         url: String,
 
+        /// Run only the test of this mode. Both run by default.
+        #[arg(long, value_enum)]
+        mode: Option<Mode>,
+
         #[command(flatten)]
         agent: AgentArgs,
     },
+    /// Store every Pragmatic Play game of the catalogue on the dashboard, without testing it
+    Sync,
     /// Check that the harness answers with the chosen model, without running a test
     Ping {
         #[command(flatten)]
         agent: AgentArgs,
     },
-    /// Demo-test the games that newly appear on Novedades
+    /// Test every Pragmatic Play game in both modes, until each has a verdict
     Watch {
-        /// Print the current games and do not save or test.
+        /// Print the games of the provider and do not save or test.
         #[arg(long, conflicts_with = "every")]
         list: bool,
 
@@ -120,7 +127,22 @@ fn run() -> Result<bool> {
             runtime.block_on(serve(data_dir))?;
             Ok(true)
         }
-        Command::Test { game, url, agent } => test(data_dir, &game, &url, &agent.agent()),
+        Command::Test {
+            game,
+            url,
+            mode,
+            agent,
+        } => {
+            let modes = mode.map_or(Mode::ALL.to_vec(), |mode| vec![mode]);
+            test(data_dir, &game, &url, &modes, &agent.agent())
+        }
+        Command::Sync => {
+            db::setup(data_dir)?;
+            let games = fetch_provider_games(&Http)?;
+            db::upsert_games(data_dir, &games)?;
+            println!("Stored {} games of {}.", games.len(), catalog::PROVIDER);
+            Ok(true)
+        }
         Command::Ping { agent } => {
             let agent = agent.agent();
             agent.ensure_installed()?;
@@ -129,7 +151,7 @@ fn run() -> Result<bool> {
             Ok(true)
         }
         Command::Watch { list: true, .. } => {
-            for game in fetch_novedades(&Http)? {
+            for game in fetch_provider_games(&Http)? {
                 println!("{}\t{}", game.id, game.name);
             }
             Ok(true)
@@ -167,10 +189,11 @@ async fn serve(data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Test a game by its name, as the catalogue describes it. When the catalogue cannot be read or
-/// has no game by that name, the stored game with that name is tested as it is, and only when
-/// there is none either is a new one stored, under an identifier made from the name.
-fn test(data_dir: &Path, name: &str, url: &str, agent: &Agent) -> Result<bool> {
+/// Test a game by its name, as the catalogue describes it, in each of `modes`. When the
+/// catalogue cannot be read or has no game by that name, the stored game with that name is tested
+/// as it is, and only when there is none either is a new one stored, under an identifier made from
+/// the name.
+fn test(data_dir: &Path, name: &str, url: &str, modes: &[Mode], agent: &Agent) -> Result<bool> {
     db::setup(data_dir)?;
     let game = match find_game(&Http, name) {
         Ok(Some(game)) => {
@@ -200,12 +223,16 @@ fn test(data_dir: &Path, name: &str, url: &str, agent: &Agent) -> Result<bool> {
             }
         }
     };
-    Ok(run::test_game(data_dir, &game, url, agent)?.passed())
+    let mut passed = true;
+    for &mode in modes {
+        passed &= run::test_game(data_dir, &game, url, mode, agent)?.passed();
+    }
+    Ok(passed)
 }
 
 fn check(data_dir: &Path, agent: &Agent) -> Result<()> {
-    watch::check(data_dir, &Http, |game| {
-        Ok(run::test_game(data_dir, game, DEFAULT_CASINO_URL, agent)?.finished())
+    watch::check(data_dir, &Http, |game, mode| {
+        Ok(run::test_game(data_dir, game, DEFAULT_CASINO_URL, mode, agent)?.finished())
     })
 }
 

@@ -1,4 +1,4 @@
-//! One demo-only game test: run directories, prompt, agent invocation, and the stored test.
+//! One game test in one mode: run directories, prompt, agent invocation, and the stored test.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Local, SecondsFormat, Utc};
+use clap::ValueEnum;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -15,13 +16,63 @@ use crate::catalog::Game;
 use crate::db;
 use crate::harness::{Agent, find_on_path};
 use crate::prompt::{
-    TEMPLATE, TemplateValues, fill_template, restore_script, session_has_placeholder, slugify,
+    NO_BALANCE_INSTRUCTIONS, REAL_MONEY_INSTRUCTIONS, TEMPLATE, TemplateValues, fill_template,
+    restore_script, session_has_placeholder, slugify,
 };
 use crate::report;
 use crate::router::{ASSETS_DIR, ASSETS_URL};
 
-/// The saved login, in the data directory.
-pub const SESSION_FILE: &str = "session-block.txt";
+/// Which test account a test plays with, and so what it checks. Every game is tested in both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Mode {
+    /// The account with balance plays one real-money round at the minimum stake.
+    RealMoney,
+    /// The account without balance tries to bet, and the game must say the balance is short.
+    NoBalance,
+}
+
+impl Mode {
+    pub const ALL: [Self; 2] = [Self::RealMoney, Self::NoBalance];
+
+    /// The name `schema/test-game.schema.json` and the database give the mode.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RealMoney => "real_money",
+            Self::NoBalance => "no_balance",
+        }
+    }
+
+    /// The saved login of the account of this mode, in the data directory.
+    #[must_use]
+    pub fn session_file(self) -> &'static str {
+        match self {
+            Self::RealMoney => "session-real-money.txt",
+            Self::NoBalance => "session-no-balance.txt",
+        }
+    }
+
+    fn instructions(self) -> &'static str {
+        match self {
+            Self::RealMoney => REAL_MONEY_INSTRUCTIONS,
+            Self::NoBalance => NO_BALANCE_INSTRUCTIONS,
+        }
+    }
+
+    /// Used in the names of the run directories and the browser session.
+    fn slug(self) -> &'static str {
+        match self {
+            Self::RealMoney => "real-money",
+            Self::NoBalance => "no-balance",
+        }
+    }
+}
+
+impl std::fmt::Display for Mode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.slug())
+    }
+}
 
 /// Private run directories, beside the assets the dashboard serves. They hold the session.
 const RUNS_DIR: &str = "runs";
@@ -39,6 +90,7 @@ pub struct Prepared {
     /// URL path `assets_dir` is served at.
     pub data_prefix: String,
     pub url: String,
+    pub mode: Mode,
     /// The playwright-cli session the agent drives the browser in.
     pub session_name: String,
     pub prompt: String,
@@ -66,7 +118,7 @@ impl Outcome {
         self.text("status")
     }
 
-    /// The game launched in demo mode and a round completed.
+    /// The game behaved as the mode expects.
     #[must_use]
     pub fn passed(&self) -> bool {
         self.agent_exit_code == Some(0) && self.status() == "working"
@@ -88,7 +140,13 @@ impl Outcome {
 ///
 /// Fails when a tool is missing, the ping fails, the run directories cannot be written, the
 /// agent cannot start, or the test cannot be stored.
-pub fn test_game(data_dir: &Path, game: &Game, url: &str, agent: &Agent) -> Result<Outcome> {
+pub fn test_game(
+    data_dir: &Path,
+    game: &Game,
+    url: &str,
+    mode: Mode,
+    agent: &Agent,
+) -> Result<Outcome> {
     if find_on_path("playwright-cli").is_none() {
         bail!(
             "playwright-cli is not on PATH.\nInstall it with: npm install -g @playwright/cli@0.1.22 \
@@ -98,14 +156,15 @@ pub fn test_game(data_dir: &Path, game: &Game, url: &str, agent: &Agent) -> Resu
     agent.ensure_installed()?;
     println!("Pinging {agent}...");
     agent.ping()?;
-    let prepared = prepare(data_dir, &game.name, url)?;
+    let prepared = prepare(data_dir, &game.name, url, mode)?;
     if prepared.session_missing {
         eprintln!(
             "warning: {} was not found. The agent will run without a restored login.",
-            data_dir.join(SESSION_FILE).display()
+            data_dir.join(mode.session_file()).display()
         );
     }
     println!("Game:   {} ({})", game.name, game.id);
+    println!("Mode:   {mode}");
     println!("URL:    {url}");
     println!("Agent:  {agent}");
     println!("Output: {}", prepared.dir.display());
@@ -149,15 +208,16 @@ pub fn test_game(data_dir: &Path, game: &Game, url: &str, agent: &Agent) -> Resu
     Ok(outcome)
 }
 
-/// Fills the prompt, and writes `runs/<slug>-<timestamp>/` and `assets/<slug>-<timestamp>/`
-/// under `data_dir`.
+/// Fills the prompt, and writes `runs/<slug>-<mode>-<timestamp>/` and
+/// `assets/<slug>-<mode>-<timestamp>/` under `data_dir`.
 ///
 /// # Errors
 ///
-/// Fails when the session file still has placeholders or a run directory cannot be written.
-pub fn prepare(data_dir: &Path, game_name: &str, url: &str) -> Result<Prepared> {
-    let (session, session_missing) = load_session(&data_dir.join(SESSION_FILE))?;
-    let slug = slugify(game_name);
+/// Fails when the session file of the mode still has placeholders or a run directory cannot be
+/// written.
+pub fn prepare(data_dir: &Path, game_name: &str, url: &str, mode: Mode) -> Result<Prepared> {
+    let (session, session_missing) = load_session(&data_dir.join(mode.session_file()))?;
+    let slug = format!("{}-{mode}", slugify(game_name));
     let stamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
     let assets_root = data_dir.join(ASSETS_DIR);
     let dir = create_run_dir(
@@ -179,6 +239,8 @@ pub fn prepare(data_dir: &Path, game_name: &str, url: &str) -> Result<Prepared> 
         TEMPLATE,
         TemplateValues {
             game_name,
+            mode: mode.as_str(),
+            mode_instructions: mode.instructions(),
             betsson_url: url,
             output_dir: absolute(&dir)?
                 .to_str()
@@ -197,6 +259,7 @@ pub fn prepare(data_dir: &Path, game_name: &str, url: &str) -> Result<Prepared> 
         assets_dir,
         data_prefix,
         url: url.to_owned(),
+        mode,
         session_name,
         prompt,
         session_missing,
@@ -208,6 +271,7 @@ pub fn prepare(data_dir: &Path, game_name: &str, url: &str) -> Result<Prepared> 
 /// A non-zero agent status still returns the report the agent produced. When the agent returns
 /// no report, one that does not follow the schema, or is stopped after [`RUN_TIMEOUT`], the
 /// document is a `test_failed` test that says why, so the run still shows up on the dashboard.
+/// The mode of the document is the one the run was prepared for, whatever the agent wrote.
 ///
 /// # Errors
 ///
@@ -237,9 +301,10 @@ pub fn execute(prepared: &Prepared, agent: &Agent) -> Result<Outcome> {
                 Ok,
             )
             .and_then(|mut report| {
-                // The trace records the session, so it is never served or linked.
                 if let Some(object) = report.as_object_mut() {
+                    // The trace records the session, so it is never served or linked.
                     object.remove("trace_path");
+                    object.insert("mode".to_owned(), json!(prepared.mode.as_str()));
                 }
                 report::validate(&report)
                     .context("the report does not follow the schema")
@@ -265,7 +330,8 @@ pub fn execute(prepared: &Prepared, agent: &Agent) -> Result<Outcome> {
 /// A test that broke before the agent could report on the game, with whatever evidence it left.
 fn test_failed(prepared: &Prepared, started_at: DateTime<Utc>, duration: u64, why: &str) -> Value {
     let mut document = json!({
-        "schema_version": 1,
+        "schema_version": 2,
+        "mode": prepared.mode.as_str(),
         "status": "test_failed",
         "summary": "The agent did not return a report the dashboard can show, so the run says \
                     nothing about the game.",
@@ -332,9 +398,11 @@ fn load_session(path: &Path) -> Result<(String, bool)> {
         fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?;
     if session_has_placeholder(&text) {
         bail!(
-            "{SESSION_FILE} still contains REPLACE_WITH_ placeholders.\n\
-             Log in to Betsson, copy the localStorage values, and replace the placeholders.\n\
-             The session expires. Update this file when demo mode starts asking you to log in."
+            "{} still contains REPLACE_WITH_ placeholders.\n\
+             Log in to Betsson with the account of this mode, copy the localStorage values, and \
+             replace the placeholders.\n\
+             The session expires. Update this file when the site starts asking you to log in.",
+            path.display()
         );
     }
     Ok((text, false))
@@ -393,7 +461,7 @@ mod tests {
     fn prepare_writes_a_private_prompt_and_restore_script() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(
-            dir.path().join(SESSION_FILE),
+            dir.path().join(Mode::RealMoney.session_file()),
             "localStorage.setItem('customerId', '7');\n",
         )
         .unwrap();
@@ -401,6 +469,7 @@ mod tests {
             dir.path(),
             "Los Piratas Golfetes",
             "https://www.betsson.es/casino",
+            Mode::RealMoney,
         )
         .unwrap();
         assert!(!prepared.session_missing);
@@ -414,9 +483,10 @@ mod tests {
         assert!(
             prepared
                 .data_prefix
-                .starts_with("/data/assets/los-piratas-golfetes-")
+                .starts_with("/data/assets/los-piratas-golfetes-real-money-")
         );
         assert!(prepared.prompt.contains("Game name: Los Piratas Golfetes"));
+        assert!(prepared.prompt.contains("Mode real_money"));
         // The session must never land where the dashboard serves files from.
         assert!(
             fs::read_dir(&prepared.assets_dir)
@@ -441,17 +511,21 @@ mod tests {
     #[test]
     fn prepare_rejects_placeholders_and_notes_a_missing_session() {
         let dir = tempfile::tempdir().unwrap();
-        let prepared = prepare(dir.path(), "Alpha", "https://www.betsson.es/casino").unwrap();
+        let url = "https://www.betsson.es/casino";
+        let prepared = prepare(dir.path(), "Alpha", url, Mode::NoBalance).unwrap();
         assert!(prepared.session_missing);
+        assert!(prepared.prompt.contains("Mode no_balance"));
         let restore = fs::read_to_string(prepared.dir.join("restore-session.js")).unwrap();
         assert!(restore.contains("no statements"));
         fs::write(
-            dir.path().join(SESSION_FILE),
+            dir.path().join(Mode::NoBalance.session_file()),
             "localStorage.setItem('session', 'REPLACE_WITH_SESSION');\n",
         )
         .unwrap();
-        let error = prepare(dir.path(), "Alpha", "https://www.betsson.es/casino").unwrap_err();
+        let error = prepare(dir.path(), "Alpha", url, Mode::NoBalance).unwrap_err();
         assert!(error.to_string().contains("REPLACE_WITH_"));
+        // Each mode reads the session of its own account.
+        assert!(prepare(dir.path(), "Alpha", url, Mode::RealMoney).is_ok());
     }
 
     #[test]
@@ -471,9 +545,10 @@ mod tests {
 
     fn report() -> Value {
         json!({
-            "schema_version": 1,
+            "schema_version": 2,
+            "mode": "real_money",
             "status": "working",
-            "summary": "Played one demo round.",
+            "summary": "Played one real-money round.",
             "started_at": "2026-10-12T10:00:00+02:00",
             "duration_ms": 1200,
             "steps": [{ "description": "Opened the lobby", "status": "passed" }],
@@ -483,11 +558,18 @@ mod tests {
     #[test]
     fn a_run_without_a_report_is_stored_as_test_failed() {
         let dir = tempfile::tempdir().unwrap();
-        let prepared = prepare(dir.path(), "Alpha", "https://www.betsson.es/casino").unwrap();
+        let prepared = prepare(
+            dir.path(),
+            "Alpha",
+            "https://www.betsson.es/casino",
+            Mode::NoBalance,
+        )
+        .unwrap();
         fs::write(prepared.assets_dir.join("session.webm"), "").unwrap();
         let document = test_failed(&prepared, Utc::now(), 5, "no report.");
         report::validate(&document).unwrap();
         assert_eq!(document["status"], "test_failed");
+        assert_eq!(document["mode"], "no_balance");
         assert_eq!(document["error"]["message"], "no report.");
         assert_eq!(
             document["video_path"],
