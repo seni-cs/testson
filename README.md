@@ -52,7 +52,10 @@ cargo run -- serve
 ```
 
 Then open [`http://127.0.0.1:8000`](http://127.0.0.1:8000). The first run creates `data-dir/`
-with an empty database. The server only reads: `test` and `watch` write the games and the tests,
+with an empty database. Stats shows each game as a status page does: a bar per test, of its latest 30,
+in the colour of its status, and its uptime, the share of those tests that reached a verdict and
+found it working. The button in the top bar switches between the light and
+the dark theme and remembers the choice. The server only reads: `test` and `watch` write the games and the tests,
 and can run while it serves.
 
 ## Session
@@ -206,7 +209,7 @@ The script was written by a model and runs unattended, so it is checked before e
 - It navigates only to Betsson, types no number above 5, and names no cashier, deposit, demo,
   bonus or buy control.
 
-The game page shows who ran each test, IA or Script, the version it saw, and a history of the
+The game page shows who ran each test, AI or Script, the version it saw, and a history of the
 game: its first test, its new versions, the scripts created and retired, and its status changes.
 
 ## Watch the Pragmatic Play games
@@ -329,7 +332,9 @@ data-dir/
 | --------------------- | ------------------------------------------------------------ |
 | `/`                   | The list of the stored games                                 |
 | `/game/{game_id}`     | The page of a game                                           |
+| `/stats`              | The latest tests of every game, as a status page             |
 | `/api/games`          | Every stored game, with its latest test of each mode         |
 | `/api/game/{game_id}` | A game and the summaries of its tests and scripts            |
 | `/api/test/{test_id}` | The JSON document of a test                                  |
+| `/api/stats`          | The latest 30 tests of every game                            |
 | `/data/assets/...`    | The videos and images in `data-dir/assets/`                  |

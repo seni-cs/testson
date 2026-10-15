@@ -276,6 +276,49 @@ fn upsert(connection: &Connection, game: &catalog::Game) -> rusqlite::Result<()>
     Ok(())
 }
 
+// Stats
+
+/// A test as the stats page draws it: one bar in the row of its game.
+#[derive(Serialize)]
+pub struct StatsTest {
+    game_id: String,
+    name: String,
+    id: i64,
+    mode: String,
+    status: String,
+    started_at: String,
+}
+
+/// Select the latest `count` tests of every game, by game and from the oldest. Tests stored
+/// before the modes are left out.
+pub fn select_latest_tests(data_dir: &Path, count: u32) -> rusqlite::Result<Vec<StatsTest>> {
+    let connection = connect(data_dir)?;
+    let mut statement = connection.prepare(
+        "SELECT games.id, games.name, latest.id, latest.mode, latest.status, latest.started_at
+         FROM (
+             SELECT id, game_id, mode, status, started_at, row_number() OVER (
+                 PARTITION BY game_id ORDER BY started_at DESC, id DESC
+             ) AS age
+             FROM tests
+             WHERE mode != 'demo'
+         ) AS latest
+         JOIN games ON games.id = latest.game_id
+         WHERE latest.age <= ?1
+         ORDER BY games.name COLLATE NOCASE, games.id, latest.age DESC",
+    )?;
+    let tests = statement.query_map([count], |row| {
+        Ok(StatsTest {
+            game_id: row.get(0)?,
+            name: row.get(1)?,
+            id: row.get(2)?,
+            mode: row.get(3)?,
+            status: row.get(4)?,
+            started_at: row.get(5)?,
+        })
+    })?;
+    tests.collect()
+}
+
 // Tests
 
 /// A test as the page of its game lists it, without its JSON document.
