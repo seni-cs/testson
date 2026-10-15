@@ -1,0 +1,18 @@
+/target
+/data-dir
+
+.DS_Store
+
+# Playwright CLI workspace and default recordings
+.playwright/
+.playwright-cli/
+
+# Session and auth material, should any end up outside data-dir
+session-block.txt
+.env
+.env.*
+auth.json
+cookies.txt
+storage-state.json
+*.pem
+*.key

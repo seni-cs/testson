@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "test-game.schema.json",
+  "title": "Game test",
+  "description": "The result of one run of the standard Playwright test against a game. Which game it ran against is stored beside the document, not in it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "summary",
+    "started_at",
+    "duration_ms",
+    "steps"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Version of this schema the document follows.",
+      "const": 1
+    },
+    "status": {
+      "description": "What the run found out about the game.",
+      "oneOf": [
+        {
+          "const": "working",
+          "description": "The game works: every step ran and the game behaved as expected in all of them."
+        },
+        {
+          "const": "failing",
+          "description": "The game is failing: a step ran against the game and what it checked did not hold."
+        },
+        {
+          "const": "test_failed",
+          "description": "The test itself failed: it could not be completed for a reason that is not the behaviour of the game, such as the browser not starting or the page never loading, so the run says nothing about the game."
+        }
+      ]
+    },
+    "summary": {
+      "description": "One or two sentences on what was tested and why the run got its status.",
+      "type": "string",
+      "minLength": 1
+    },
+    "game_url": {
+      "description": "URL of the game, or of the page it was launched from.",
+      "type": "string",
+      "format": "uri"
+    },
+    "started_at": {
+      "description": "When the test started.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "description": "Total duration of the test in milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "video_path": {
+      "description": "URL path the session recording is served at, such as '/data/...'. Absent if the browser never started.",
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_path": {
+      "description": "URL path the Playwright trace archive (trace.zip) is served at, such as '/data/...'. The trace replays the run action by action in the Playwright trace viewer, so it is worth keeping at least for the runs that do not end in 'working'.",
+      "type": "string",
+      "minLength": 1
+    },
+    "steps": {
+      "description": "The timeline of the test: every step it is made of, in execution order, with the evidence captured during it.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "error": {
+      "description": "Why the test could not be completed. Present only when the status is 'test_failed'.",
+      "$ref": "#/$defs/error"
+    },
+    "environment": { "$ref": "#/$defs/environment" }
+  },
+  "if": {
+    "properties": { "status": { "const": "test_failed" } },
+    "required": ["status"]
+  },
+  "then": { "required": ["error"] },
+  "else": { "not": { "required": ["error"] } },
+  "$defs": {
+    "step": {
+      "description": "One thing the test does or checks, its outcome and the evidence captured during it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "status"],
+      "properties": {
+        "action": {
+          "description": "Playwright action the step performed, such as 'goto', 'click', 'press' or 'expect'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "description": "What the step does or checks, in words a person who does not know the test can follow.",
+          "type": "string",
+          "minLength": 1
+        },
+        "selector": {
+          "description": "Locator the action targeted, if any.",
+          "type": "string"
+        },
+        "status": {
+          "description": "How the step ended.",
+          "oneOf": [
+            { "const": "passed", "description": "The step ran and what it did or checked held." },
+            { "const": "failed", "description": "The step ran and did not hold. It is the step the test stopped at." },
+            { "const": "skipped", "description": "The step never ran, because an earlier step failed." }
+          ]
+        },
+        "error": {
+          "description": "Why the step failed.",
+          "$ref": "#/$defs/error"
+        },
+        "screenshots": {
+          "description": "Screenshots taken during this step, in chronological order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/screenshot" }
+        },
+        "console_messages": {
+          "description": "Warnings and errors written to the browser console during this step.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/console_message" }
+        },
+        "failed_requests": {
+          "description": "Network requests that failed or returned an HTTP error status during this step.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/failed_request" }
+        }
+      },
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": { "required": ["error"] }
+    },
+    "screenshot": {
+      "description": "One image captured during a step.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "description": "URL path the image is served at, such as '/data/...'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "caption": {
+          "description": "What the screenshot shows.",
+          "type": "string"
+        },
+        "taken_at": {
+          "description": "When the screenshot was taken.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "console_message": {
+      "description": "One message written to the browser console.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "text"],
+      "properties": {
+        "level": {
+          "description": "Severity of the message.",
+          "enum": ["warning", "error"]
+        },
+        "text": {
+          "description": "Content of the message.",
+          "type": "string"
+        },
+        "source_url": {
+          "description": "URL of the script or page that produced the message.",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "failed_request": {
+      "description": "One network request that did not succeed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "method"],
+      "anyOf": [
+        { "required": ["status_code"] },
+        { "required": ["failure"] }
+      ],
+      "properties": {
+        "url": {
+          "description": "URL that was requested.",
+          "type": "string",
+          "format": "uri"
+        },
+        "method": {
+          "description": "HTTP method of the request.",
+          "type": "string",
+          "minLength": 1
+        },
+        "status_code": {
+          "description": "HTTP error status returned. Absent if no response was received.",
+          "type": "integer",
+          "minimum": 400,
+          "maximum": 599
+        },
+        "failure": {
+          "description": "Network-level failure reason, such as 'net::ERR_CONNECTION_REFUSED'.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "error": {
+      "description": "An error raised during the test.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "message": {
+          "description": "Error message.",
+          "type": "string",
+          "minLength": 1
+        },
+        "stack": {
+          "description": "Stack trace, if available.",
+          "type": "string"
+        }
+      }
+    },
+    "environment": {
+      "description": "Browser configuration the test ran with.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "browser": {
+          "description": "Browser engine used.",
+          "enum": ["chromium", "firefox", "webkit"]
+        },
+        "viewport": {
+          "description": "Size of the browser viewport in pixels.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "user_agent": {
+          "description": "User agent string the browser sent.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}
