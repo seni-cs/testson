@@ -81,6 +81,20 @@ function renderProperties(test) {
         renderFact("Run by", ...ranBy),
         renderFact("Duration", formatDuration(test.duration_ms)),
     );
+    for (const [label, before, after] of [
+        ["Betsson balance", test.balance_before, test.balance_after],
+        ["Game balance", test.game_balance_before, test.game_balance_after],
+    ]) {
+        if (before || after) {
+            properties.append(renderFact(label, `${before ?? "?"} → ${after ?? "?"}`));
+        }
+    }
+    if (test.currency) {
+        properties.append(renderFact("Currency", test.currency));
+    }
+    if (test.language) {
+        properties.append(renderFact("Message language", test.language));
+    }
     if (test.script_outcome) {
         properties.append(renderFact("Script", SCRIPT_OUTCOMES[test.script_outcome]));
     }

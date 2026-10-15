@@ -70,7 +70,7 @@ Instructions:
    playwright-cli --session {{SESSION_NAME}} state-load '{{OUTPUT_DIR}}/session.json'
    playwright-cli --session {{SESSION_NAME}} reload
    Snapshot again and confirm a logged-in state (user menu, balance, or no login button). If state-load fails, the page is logged out, or the site shows a login form, the session is missing or expired. Stop with status "test_failed" and say that the session of this mode must be saved again with `testson login`. Do not try to log in through the form.
-   Read the account balance the site shows and keep it, as written, for balance_before. Apply the balance check of this mode before opening the game.
+   Read the Betsson account balance the site shows and keep it, as written, for balance_before. Apply the balance check of this mode before opening the game.
 
 4. Find and launch {{GAME_NAME}} in real-money mode:
    - Search the lobby for the exact game name. Do not launch a similarly named game.
@@ -94,9 +94,10 @@ Instructions:
 
 5. Play as this mode says:
    - If you do not know how to play, open the in-game rules or menu first (hamburger, gear, "i", paytable, "reglas", "info", "ayuda"). Read the controls. Screenshot the rules.
+   - Read the balance the game itself shows, such as "CRÉDITO 12,40 €", for game_balance_before, and the currency the game and Betsson show the balance and the stake in, for currency. This is betsson.es, so it must be the euro (€, EUR); any other currency is "failing".
    - Lower the stake to the minimum the game allows, and read it back before pressing spin.
    - If the client is canvas-based or has no accessible controls, take a screenshot, read coordinates with `snapshot --boxes`, and click with `mousemove` / `mousedown` / `mouseup`. Stay inside the game client.
-   - Screenshot the result into {{ASSETS_DIR}}/screenshots/, and read the balance again for balance_after.
+   - Screenshot the result into {{ASSETS_DIR}}/screenshots/. Read the balance inside the game again for game_balance_after, and the Betsson account balance again for balance_after, from the Betsson page around the game, not from the game.
 
 6. Collect evidence before closing:
    - playwright-cli --session {{SESSION_NAME}} console warning
@@ -146,7 +147,7 @@ Fill it this way:
 - Set "mode" to "{{MODE}}" and "runner" to "agent". Never set script_id or script_outcome.
 - Use status "working" only when every expected criterion of this mode passed. Use "failing" when the game did not meet them. Use "test_failed" only as described above.
 - Include "error" with a "message" only when status is "test_failed". Omit "error" when status is "working" or "failing".
-- Set balance_before and balance_after to the balances as the page wrote them, currency included. Omit one you could not read. Do not use empty strings.
+- Set balance_before and balance_after to the Betsson balances, and game_balance_before and game_balance_after to the balances inside the game, as they were written, currency included. Set currency to the currency they were shown in, such as "€". Omit one you could not read. Do not use empty strings.
 - Each step is one thing the test did or checked, described so a person who does not know the test can follow it. Set "action" to the Playwright action it performed, and "selector" to the locator it targeted when there was one.
 - A step with status "failed" must include "error". Omit "error" on steps that passed or were skipped.
 - video_path and screenshot path are URL paths under {{DATA_PREFIX}}, not filesystem paths. video_path is {{DATA_PREFIX}}/session.webm. A screenshot path is {{DATA_PREFIX}}/screenshots/<filename>. Omit video_path when the browser never started or no video file exists. Do not use empty strings.
@@ -166,8 +167,11 @@ Example shape for a working run. Replace every angle-bracket placeholder with th
   "summary": "<1-2 sentences: what was tested, in which mode, and why it received this status>",
   "started_at": "<ISO 8601 date-time when the test started>",
   "duration_ms": 0,
-  "balance_before": "<balance as the page wrote it before the bet>",
-  "balance_after": "<balance as the page wrote it after the round or the refused bet>",
+  "balance_before": "<Betsson balance as the page wrote it before the bet>",
+  "balance_after": "<Betsson balance as the page wrote it after the round or the refused bet>",
+  "game_balance_before": "<balance inside the game before the bet>",
+  "game_balance_after": "<balance inside the game after the round or the refused bet>",
+  "currency": "<currency the balances and the stake were shown in, such as €>",
   "video_path": "{{DATA_PREFIX}}/session.webm",
   "game_version": { "build_url": "<url of build.js without its query string>", "etag": "<etag header of build.js, as sent>" },
   "post_messages": [],

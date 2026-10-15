@@ -150,6 +150,10 @@ pub enum Reading {
     Stake,
     Win,
     BalanceAfter,
+    GameBalanceBefore,
+    GameBalanceAfter,
+    Currency,
+    Language,
 }
 
 impl Reading {
@@ -159,7 +163,16 @@ impl Reading {
             Self::Stake => "stake",
             Self::Win => "win",
             Self::BalanceAfter => "balance_after",
+            Self::GameBalanceBefore => "game_balance_before",
+            Self::GameBalanceAfter => "game_balance_after",
+            Self::Currency => "currency",
+            Self::Language => "language",
         }
+    }
+
+    /// The currency and the language are text; every other reading is an amount of money.
+    fn is_money(self) -> bool {
+        !matches!(self, Self::Currency | Self::Language)
     }
 }
 
@@ -213,13 +226,25 @@ pub fn validate(script: &Script, mode: Mode) -> Result<()> {
             .is_none_or(|&action| balance_before[0] < action),
         "the script reads balance_before before it does anything"
     );
-    for name in [Reading::Stake, Reading::Win, Reading::BalanceAfter] {
+    for name in [
+        Reading::Stake,
+        Reading::Win,
+        Reading::BalanceAfter,
+        Reading::GameBalanceBefore,
+        Reading::GameBalanceAfter,
+        Reading::Currency,
+        Reading::Language,
+    ] {
         ensure!(
             reading(name).len() <= 1,
             "the script reads {} more than once",
             name.as_str()
         );
     }
+    ensure!(
+        !reading(Reading::Currency).is_empty(),
+        "the script reads the currency"
+    );
     if let Some(spin) = spin {
         let stake = reading(Reading::Stake).first().copied();
         ensure!(
@@ -233,33 +258,65 @@ pub fn validate(script: &Script, mode: Mode) -> Result<()> {
                 .any(|step| step.role.acts())),
             "nothing acts between the read of the stake and the spin"
         );
-        for name in [Reading::Win, Reading::BalanceAfter] {
+    }
+    check_balance_readings(script, spin)?;
+    if mode == Mode::NoBalance {
+        ensure!(
+            script.steps.iter().any(|step| step.role == Role::Expect),
+            "a no_balance script expects the message that the balance is not enough"
+        );
+        ensure!(
+            !reading(Reading::Language).is_empty(),
+            "a no_balance script reads the language of that message"
+        );
+    }
+    Ok(())
+}
+
+/// The Betsson balance and the balance inside the game are both read around the spin, so the
+/// replay can check each follows the round, or does not change when the bet is refused.
+fn check_balance_readings(script: &Script, spin: Option<usize>) -> Result<()> {
+    let reading = |name| positions(script, |step| step.name == Some(name));
+    if let Some(spin) = spin {
+        for name in [
+            Reading::Win,
+            Reading::BalanceAfter,
+            Reading::GameBalanceAfter,
+        ] {
             ensure!(
                 reading(name).iter().all(|&at| at > spin),
                 "the script reads {} after it spins",
                 name.as_str()
             );
         }
-    }
-    // The balance after the round is awaited until it is the one the win makes, so the win is
-    // read first.
-    ensure!(
-        reading(Reading::Win)
-            .iter()
-            .all(|&win| reading(Reading::BalanceAfter)
+        ensure!(
+            reading(Reading::GameBalanceBefore)
                 .iter()
-                .all(|&after| win < after)),
-        "the script reads the win before balance_after"
-    );
-    match mode {
-        Mode::RealMoney => ensure!(
-            !reading(Reading::BalanceAfter).is_empty(),
-            "a real_money script reads balance_after"
-        ),
-        Mode::NoBalance => ensure!(
-            script.steps.iter().any(|step| step.role == Role::Expect),
-            "a no_balance script expects the message that the balance is not enough"
-        ),
+                .all(|&at| at < spin),
+            "the script reads game_balance_before before it spins"
+        );
+        for name in [
+            Reading::BalanceAfter,
+            Reading::GameBalanceBefore,
+            Reading::GameBalanceAfter,
+        ] {
+            ensure!(
+                !reading(name).is_empty(),
+                "a script that spins reads {}",
+                name.as_str()
+            );
+        }
+    }
+    // The balances after the round are awaited until they are the ones the win makes, so the win
+    // is read first.
+    for after in [Reading::BalanceAfter, Reading::GameBalanceAfter] {
+        ensure!(
+            reading(Reading::Win)
+                .iter()
+                .all(|&win| reading(after).iter().all(|&at| win < at)),
+            "the script reads the win before {}",
+            after.as_str()
+        );
     }
     Ok(())
 }
@@ -389,6 +446,22 @@ fn check_command(command: &[String], role: Role) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+/// Whether a currency, as read, is the euro: `€`, `EUR`, or an amount written with either.
+fn is_euro(text: &str) -> bool {
+    text.contains('€') || text.to_uppercase().contains("EUR")
+}
+
+/// Whether the language of a message, read as a code such as `ES` or `es-ES` or as the message
+/// itself, is Spanish.
+fn is_spanish(text: &str) -> bool {
+    const WORDS: [&str; 5] = ["saldo", "fondos", "insuficiente", "suficiente", "depósito"];
+    let text = text.trim().trim_matches('"').to_lowercase();
+    text == "es"
+        || text.starts_with("es-")
+        || text.starts_with("es_")
+        || WORDS.iter().any(|word| text.contains(word))
 }
 
 /// Reads an amount of money as a page writes it, such as `12,40 €`, `€1,234.50` or `0.20`, in
@@ -594,9 +667,13 @@ impl<B: Browser> Run<'_, B> {
         for step in &script.steps {
             self.step(script, step)?;
         }
-        if self.context.mode == Mode::RealMoney {
-            self.check_balance()?;
-        }
+        self.check_balance(Reading::BalanceBefore, Reading::BalanceAfter, "Betsson")?;
+        self.check_balance(
+            Reading::GameBalanceBefore,
+            Reading::GameBalanceAfter,
+            "game",
+        )?;
+        self.check_market()?;
         Ok(())
     }
 
@@ -644,6 +721,10 @@ impl<B: Browser> Run<'_, B> {
         self.ran += 1;
         let value = result.map_err(Stop::Step)?;
         if let Some(name) = step.name {
+            if !name.is_money() {
+                self.readings.push((name, value, 0));
+                return Ok(());
+            }
             let Some(cents) = parse_cents(&value) else {
                 let message = format!("{} {value:?} is not an amount of money", name.as_str());
                 self.fail_last(&message);
@@ -691,9 +772,11 @@ impl<B: Browser> Run<'_, B> {
             .map(Regex::new)
             .transpose()
             .map_err(|error| error.to_string())?;
-        let awaited = (step.name == Some(Reading::BalanceAfter))
-            .then(|| self.expected_balance())
-            .flatten();
+        let awaited = match step.name {
+            Some(Reading::BalanceAfter) => self.expected_balance(Reading::BalanceBefore),
+            Some(Reading::GameBalanceAfter) => self.expected_balance(Reading::GameBalanceBefore),
+            _ => None,
+        };
         let timeout = Duration::from_millis(step.timeout_ms.unwrap_or(PROBE_TIMEOUT_MS));
         let attempts = (timeout.as_millis() / POLL_INTERVAL.as_millis()).max(1);
         let started = Instant::now();
@@ -814,36 +897,81 @@ impl<B: Browser> Run<'_, B> {
         Err(Stop::Blocked(message))
     }
 
-    /// The balance the round should leave: the balance before it, less the stake, plus the win.
-    fn expected_balance(&self) -> Option<i64> {
+    /// The balance the round should leave from the reading `before`: with real money, less the
+    /// stake, plus the win; without balance, the bet is refused, so the same.
+    fn expected_balance(&self, before: Reading) -> Option<i64> {
+        let before = self.cents(before)?;
+        if self.context.mode == Mode::NoBalance {
+            return Some(before);
+        }
         let win = self.cents(Reading::Win).unwrap_or(0);
-        Some(self.cents(Reading::BalanceBefore)? - self.cents(Reading::Stake)? + win)
+        Some(before - self.cents(Reading::Stake)? + win)
     }
 
-    /// With real money, the balance after the round must be the one it should leave.
-    fn check_balance(&mut self) -> Result<(), Stop> {
-        let (Some(expected), Some(after)) =
-            (self.expected_balance(), self.cents(Reading::BalanceAfter))
+    /// The balance after the round, of Betsson or of the game, must be the one it should leave.
+    fn check_balance(&mut self, before: Reading, after: Reading, whose: &str) -> Result<(), Stop> {
+        let (Some(expected), Some(read)) = (self.expected_balance(before), self.cents(after))
         else {
             return Ok(());
         };
-        let description = format!(
-            "Checked the balance: {} − {} stake + {} win = {}",
-            euros(self.cents(Reading::BalanceBefore).unwrap_or_default()),
-            euros(self.cents(Reading::Stake).unwrap_or_default()),
-            euros(self.cents(Reading::Win).unwrap_or_default()),
-            euros(expected)
-        );
-        let message = (expected != after).then(|| {
+        let start = euros(self.cents(before).unwrap_or_default());
+        let description = match self.context.mode {
+            Mode::RealMoney => format!(
+                "Checked the {whose} balance: {start} − {} stake + {} win = {}",
+                euros(self.cents(Reading::Stake).unwrap_or_default()),
+                euros(self.cents(Reading::Win).unwrap_or_default()),
+                euros(expected)
+            ),
+            Mode::NoBalance => {
+                format!("Checked that the {whose} balance did not change from {start}")
+            }
+        };
+        let message = (expected != read).then(|| {
             format!(
-                "The balance after the round is {}, not the {} the stake and the win make.",
-                euros(after),
+                "The {whose} balance after the round is {}, not the {} it should be.",
+                euros(read),
                 euros(expected)
             )
         });
         self.steps
             .push(report_step("expect", &description, message.as_deref()));
         if message.is_some() {
+            return Err(Stop::Game);
+        }
+        Ok(())
+    }
+
+    /// The market is betsson.es: the currency shown must be the euro, and the message that the
+    /// balance is not enough must be in Spanish.
+    fn check_market(&mut self) -> Result<(), Stop> {
+        let currency = self
+            .reading(Reading::Currency)
+            .map(|(text, _)| text.to_owned());
+        let language = self
+            .reading(Reading::Language)
+            .map(|(text, _)| text.to_owned());
+        let mut failed = false;
+        if let Some(currency) = currency {
+            let message =
+                (!is_euro(&currency)).then(|| format!("The currency is {currency:?}, not EUR."));
+            self.steps.push(report_step(
+                "expect",
+                "Checked that the currency is EUR",
+                message.as_deref(),
+            ));
+            failed |= message.is_some();
+        }
+        if let Some(language) = language {
+            let message = (!is_spanish(&language))
+                .then(|| format!("The message is in {language:?}, not in Spanish."));
+            self.steps.push(report_step(
+                "expect",
+                "Checked that the message is in Spanish",
+                message.as_deref(),
+            ));
+            failed |= message.is_some();
+        }
+        if failed {
             return Err(Stop::Game);
         }
         Ok(())
@@ -975,6 +1103,10 @@ impl<B: Browser> Run<'_, B> {
         for (key, name) in [
             ("balance_before", Reading::BalanceBefore),
             ("balance_after", Reading::BalanceAfter),
+            ("game_balance_before", Reading::GameBalanceBefore),
+            ("game_balance_after", Reading::GameBalanceAfter),
+            ("currency", Reading::Currency),
+            ("language", Reading::Language),
         ] {
             if let Some((text, _)) = self.reading(name).filter(|(text, _)| !text.is_empty()) {
                 document[key] = json!(text.trim());
@@ -1017,7 +1149,8 @@ fn verdict(
         Some(Stop::Game) => (
             "failing",
             "completed",
-            "The replay played its round, but the balance did not follow it.",
+            "The replay ran every step, but a check of the game did not hold: a balance did not \
+             follow the round, or the currency or the language is not the expected one.",
         ),
         Some(Stop::Step(_)) => (
             "test_failed",
@@ -1268,12 +1401,18 @@ mod tests {
                   "commands": [["click", "getByRole('button', { name: 'Jugar' })"]] },
                 { "role": "expect", "description": "The game is ready",
                   "commands": [["find", "Girar"]], "matches": "Girar" },
+                { "role": "read", "name": "game_balance_before", "description": "Read the game balance",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.game-balance').textContent"]] },
                 { "role": "read", "name": "stake", "description": "Read the stake",
                   "commands": [["--raw", "eval", "() => document.querySelector('.stake').textContent"]] },
                 { "role": "spin", "description": "Press spin",
                   "commands": [["mousemove", "1200", "780"], ["mousedown"], ["mouseup"]] },
                 { "role": "read", "name": "balance_after", "description": "Read the balance after",
-                  "source": "response", "url_matches": "gameService", "matches": "balance=([\\d.]+)" }
+                  "source": "response", "url_matches": "gameService", "matches": "balance=([\\d.]+)" },
+                { "role": "read", "name": "game_balance_after", "description": "Read the game balance after",
+                  "source": "response", "url_matches": "gameService", "matches": "balance=([\\d.]+)" },
+                { "role": "read", "name": "currency", "description": "Read the currency",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.currency').textContent"]] }
             ]
         })
     }
@@ -1311,9 +1450,9 @@ mod tests {
             ("/steps/1/commands", json!([["press", "Space"]])),
             ("/steps/1/commands", json!([["keydown", "Space"]])),
             ("/steps/1/commands", json!([["--json", "click", "#x"]])),
-            ("/steps/5/name", json!("win")),
+            ("/steps/6/name", json!("win")),
             (
-                "/steps/6",
+                "/steps/9",
                 json!({ "role": "read", "name": "win", "description": "Read the win late",
                         "commands": [["find", "Ganancia"]], "matches": "([\\d,]+)" }),
             ),
@@ -1321,28 +1460,32 @@ mod tests {
             ("/steps/1/commands", json!([["click", "#x", "--force"]])),
             ("/steps/1/commands", json!([])),
             (
-                "/steps/3/commands",
+                "/steps/4/commands",
                 json!([["eval", "() => document.querySelector('#spin').click()"]]),
             ),
             (
-                "/steps/3/commands",
+                "/steps/4/commands",
                 json!([["eval", "() => (window.x = 1)"]]),
             ),
-            ("/steps/3/commands", json!([["click", "#stake"]])),
+            ("/steps/4/commands", json!([["click", "#stake"]])),
             ("/steps/2/matches", json!("(")),
             ("/steps/2/timeout_ms", json!(500_000)),
-            ("/steps/5/url_matches", Value::Null),
-            ("/steps/5/name", json!("stake")),
+            ("/steps/6/url_matches", Value::Null),
+            ("/steps/6/name", json!("stake")),
             ("/steps/0/name", json!("win")),
-            ("/steps/6", spin.clone()),
+            ("/steps/9", spin.clone()),
             (
-                "/steps/6",
+                "/steps/9",
                 json!({ "role": "action", "description": "Close", "commands": [["click", "#x"]] }),
             ),
             (
-                "/steps/4",
+                "/steps/5",
                 json!({ "role": "pause", "description": "Wait", "timeout_ms": 10 }),
             ),
+            // Both balances are read around the spin, and the currency always.
+            ("/steps/3/name", json!("win")),
+            ("/steps/7/name", json!("win")),
+            ("/steps/8/name", json!("win")),
         ] {
             let mut broken = script();
             let (parent, key) = pointer.rsplit_once('/').unwrap();
@@ -1380,19 +1523,19 @@ mod tests {
             json!([["mousemove", "1200", "780"]]),
         ] {
             let mut broken = script();
-            broken["steps"][4]["commands"] = commands.clone();
+            broken["steps"][5]["commands"] = commands.clone();
             assert!(parsed(&broken).is_err(), "{commands} was accepted");
         }
         // The stake checked before the spin is the one bet, so nothing acts in between.
         let mut raised = script();
         raised["steps"].as_array_mut().unwrap().insert(
-            4,
+            5,
             json!({ "role": "action", "description": "Raise the stake",
                     "commands": [["click", "#bet-plus"]] }),
         );
         assert!(parsed(&raised).is_err());
         // Only an action may be skipped.
-        for step in [2, 4] {
+        for step in [2, 5] {
             let mut broken = script();
             broken["steps"][step]["optional"] = json!(true);
             assert!(
@@ -1405,7 +1548,7 @@ mod tests {
     #[test]
     fn a_spin_may_be_one_click_and_an_action_optional() {
         let mut simple = script();
-        simple["steps"][4]["commands"] = json!([["click", "#spin"]]);
+        simple["steps"][5]["commands"] = json!([["click", "#spin"]]);
         simple["steps"][1]["optional"] = json!(true);
         parsed(&simple).unwrap();
     }
@@ -1420,6 +1563,10 @@ mod tests {
                 { "role": "read", "name": "balance_before", "description": "Read the balance",
                   "commands": [["find", "Saldo"]], "matches": "Saldo ([\\d,]+ €)" },
                 { "role": "action", "description": "Open the game", "commands": [["click", ".game"]] },
+                { "role": "read", "name": "currency", "description": "Read the currency",
+                  "commands": [["find", "Saldo"]], "matches": "Saldo [\\d,]+ (€)" },
+                { "role": "read", "name": "language", "description": "Read the message",
+                  "commands": [["find", "Saldo insuficiente"]], "matches": "(Saldo insuficiente)" },
                 { "role": "expect", "description": "The lobby refuses",
                   "commands": [["find", "Saldo insuficiente"]], "matches": "Saldo insuficiente" }
             ]
@@ -1428,6 +1575,10 @@ mod tests {
         let mut silent = lobby.clone();
         silent["steps"].as_array_mut().unwrap().pop();
         assert!(parse(&silent.to_string(), Mode::NoBalance).is_err());
+        // The language of the message is read too.
+        let mut unread = lobby.clone();
+        unread["steps"].as_array_mut().unwrap().remove(3);
+        assert!(parse(&unread.to_string(), Mode::NoBalance).is_err());
     }
 
     #[test]
@@ -1476,7 +1627,8 @@ mod tests {
             c if c.contains("collect-messages.js") => {
                 r#"[{"at":"2026-10-15T10:00:00.000Z","direction":"to_lobby","origin":"https://x","data":{"event":"loaded"}}]"#
             }
-            c if c.contains(".balance") => "\"12,40 €\"",
+            c if c.contains(".balance") || c.contains(".game-balance") => "\"12,40 €\"",
+            c if c.contains(".currency") => "\"€\"",
             c if c.contains(".stake") => "\"0,20 €\"",
             c if c.starts_with("requests --static") => {
                 "1. [GET] https://x.pragmaticplay.net/gs2c/build.js?v=9 => [200] OK"
@@ -1501,8 +1653,13 @@ mod tests {
         script: &Value,
     ) -> (Value, Vec<String>) {
         let dir = tempfile::tempdir().unwrap();
+        let mode = if script["mode"] == "no_balance" {
+            Mode::NoBalance
+        } else {
+            Mode::RealMoney
+        };
         let context = Replay {
-            mode: Mode::RealMoney,
+            mode,
             url: "https://www.betsson.es/casino",
             script_id: 3,
             run_dir: dir.path(),
@@ -1513,7 +1670,8 @@ mod tests {
             answer,
             ran: Vec::new(),
         };
-        let document = replay(&mut browser, &context, &parsed(script).unwrap());
+        let script = parse(&script.to_string(), mode).unwrap();
+        let document = replay(&mut browser, &context, &script);
         report::validate(&document).unwrap();
         (document, browser.ran)
     }
@@ -1569,6 +1727,92 @@ mod tests {
     }
 
     #[test]
+    fn the_game_balance_and_the_currency_are_checked_too() {
+        // The game shows another balance than Betsson's after the round.
+        let mut game_only = script();
+        game_only["steps"][7]["matches"] = json!("stime=([\\d.]+)");
+        let (document, _) = replay_with(|command| Some(game(command)), &game_only);
+        assert_eq!(document["status"], "failing", "{document:#}");
+        assert_eq!(document["game_balance_after"], "1");
+        // The game is played in another currency.
+        let (document, _) = replay_with(
+            |command| {
+                if command.contains(".currency") {
+                    Some("\"PEN\"".to_owned())
+                } else {
+                    Some(game(command))
+                }
+            },
+            &script(),
+        );
+        assert_eq!(document["status"], "failing", "{document:#}");
+        assert_eq!(document["currency"], "PEN");
+    }
+
+    #[test]
+    fn a_refused_bet_leaves_both_balances_and_speaks_spanish() {
+        let refused = json!({
+            "script_version": 1,
+            "mode": "no_balance",
+            "game_version": { "build_url": "https://x.pragmaticplay.net/gs2c/build.js", "etag": "\"abc\"" },
+            "steps": [
+                { "role": "read", "name": "balance_before", "description": "Read the balance",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.empty').textContent"]] },
+                { "role": "action", "description": "Open the game", "commands": [["click", ".game"]] },
+                { "role": "read", "name": "game_balance_before", "description": "Read the game balance",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.empty').textContent"]] },
+                { "role": "read", "name": "stake", "description": "Read the stake",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.stake').textContent"]] },
+                { "role": "spin", "description": "Press spin", "commands": [["click", "#spin"]] },
+                { "role": "read", "name": "balance_after", "description": "Read the balance after",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.empty').textContent"]] },
+                { "role": "read", "name": "game_balance_after", "description": "Read the game balance after",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.empty').textContent"]] },
+                { "role": "read", "name": "currency", "description": "Read the currency",
+                  "commands": [["--raw", "eval", "() => document.querySelector('.currency').textContent"]] },
+                { "role": "read", "name": "language", "description": "Read the language of the message",
+                  "source": "messages", "matches": "\"lang\":\"(\\w+)\",\"name\":\"balanceTooLow\"" },
+                { "role": "expect", "description": "The game says the balance is not enough",
+                  "source": "messages", "matches": "balanceTooLow" }
+            ]
+        });
+        let answer = |language: &'static str| {
+            move |command: &str| {
+                Some(match command {
+                    c if c.contains(".empty") => "\"0,00 €\"".to_owned(),
+                    c if c.contains("collect-messages.js") => format!(
+                        r#"[{{"at":"2026-10-15T10:00:00Z","direction":"to_lobby","data":{{"lang":"{language}","name":"balanceTooLow"}}}}]"#
+                    ),
+                    c => game(c),
+                })
+            }
+        };
+        let (document, _) = replay_with(answer("ES"), &refused);
+        assert_eq!(document["status"], "working", "{document:#}");
+        assert_eq!(document["language"], "ES");
+        assert_eq!(document["game_balance_after"], "0,00 €");
+        let (document, _) = replay_with(answer("EN"), &refused);
+        assert_eq!(document["status"], "failing", "{document:#}");
+    }
+
+    #[test]
+    fn knows_the_euro_and_spanish() {
+        for euro in ["€", "EUR", "eur", "12,40 €"] {
+            assert!(is_euro(euro), "{euro}");
+        }
+        assert!(!is_euro("PEN") && !is_euro("S/ 12,40"));
+        for spanish in [
+            "ES",
+            "es-ES",
+            "\"es\"",
+            "Fondos insuficientes para realizar esta apuesta",
+        ] {
+            assert!(is_spanish(spanish), "{spanish}");
+        }
+        assert!(!is_spanish("EN") && !is_spanish("Insufficient funds"));
+    }
+
+    #[test]
     fn a_new_version_stops_before_the_spin() {
         let (document, ran) = replay_with(
             |command| {
@@ -1590,7 +1834,8 @@ mod tests {
             .iter()
             .filter(|step| step["status"] == "skipped")
             .count();
-        assert_eq!(skipped, 2);
+        // The spin and the three readings after it.
+        assert_eq!(skipped, 4);
     }
 
     #[test]
@@ -1668,7 +1913,7 @@ mod tests {
     #[test]
     fn a_probe_reads_the_latest_message() {
         let mut messages = script();
-        messages["steps"][5] = json!({
+        messages["steps"][6] = json!({
             "role": "read", "name": "balance_after", "description": "Read the balance after",
             "source": "messages", "matches": "\"balance\":([\\d.]+)"
         });

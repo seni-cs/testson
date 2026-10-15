@@ -190,9 +190,11 @@ ended less than an hour ago, the gaming-session form, which does not show while 
 active, or the intro screen of a game. The agent marks the actions on them `optional`, and the
 replay skips such an action when it finds nothing to act on.
 
-Every test, by the agent or by a script, is stored on its own, with `runner` saying which. A replay
-that ran every step is `working`, or, in real-money mode, `failing` when the balance after the
-round is not the balance before it less the stake plus the win, to the cent. Any other step that
+Every test, by the agent or by a script, is stored on its own, with `runner` saying which. Both
+balances are checked apart: the Betsson balance and the balance inside the game. A replay that ran
+every step is `working`, or `failing` when either balance after the round is not the one before
+it less the stake plus the win, to the cent, or, without balance, is not the one before it; when
+the currency is not the euro; or, without balance, when the message is not in Spanish. Any other step that
 does not hold, such as a message that does not appear, may be the script as much as the game, so
 the agent tests the game and gives the verdict.
 

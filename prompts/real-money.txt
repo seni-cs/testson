@@ -6,7 +6,9 @@ Mode real_money: the account has balance, and one round is played for real money
 
 Expected criteria (all must pass for status "working"):
 1. The game launches in real-money mode and shows the account balance.
-2. One round at the minimum stake completes, and the balance changes by the stake and the win, if any.
-If the game itself does not launch (a block of the account, as described above, is "test_failed"), the round errors or never settles, or the balance is wrong, status is "failing".
+2. One round at the minimum stake completes.
+3. The Betsson balance changes by the stake and the win, if any, and so does the balance inside the game.
+4. The balances and the stake are shown in euros.
+If the game itself does not launch (a block of the account, as described above, is "test_failed"), the round errors or never settles, a balance is wrong, or the currency is not the euro, status is "failing".
 
-Replay script (real_money): it reads balance_before in the lobby before anything else, the stake before the spin, and balance_after once the round settled, plus the win when the round won anything. testson checks that balance_after is balance_before less the stake plus the win, to the cent, so read amounts that settle that way, such as the balance the game server returns after the spin.
+Replay script (real_money): it reads balance_before in the lobby before anything else, the currency, game_balance_before and the stake before the spin, and balance_after and game_balance_after once the round settled, plus the win when the round won anything, before them. testson checks that each balance after is its balance before less the stake plus the win, to the cent. Read balance_after from Betsson, such as the balance its page or its wallet shows, and game_balance_after from the game, such as the balance its server returns after the spin.

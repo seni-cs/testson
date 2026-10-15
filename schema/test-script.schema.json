@@ -88,8 +88,8 @@
           "minLength": 1
         },
         "name": {
-          "description": "Which reading a read step makes. Money is read as the page writes it, such as '12,40 €'.",
-          "enum": ["balance_before", "stake", "win", "balance_after"]
+          "description": "Which reading a read step makes. balance_before and balance_after are the Betsson balance, game_balance_before and game_balance_after the balance inside the game. Money is read as the page writes it, such as '12,40 €'. currency is the currency shown, such as '€' or 'EUR'. language is the language of the message that the balance is not enough, as a code such as 'ES', or its text.",
+          "enum": ["balance_before", "stake", "win", "balance_after", "game_balance_before", "game_balance_after", "currency", "language"]
         },
         "timeout_ms": {
           "description": "How long a pause waits, or how long a probe keeps trying. Probes default to 30000.",
