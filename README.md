@@ -168,8 +168,7 @@ who ran each test (**AI** or **Script**), the version it saw, and a timeline of 
 scripts and status changes. The Stats page shows each game's latest 30 tests as a status bar with
 an uptime.
 
-**7. Model-agnostic.** `--harness claude|codex|grok`, with `--model` and `--effort`. Claude runs
-Haiku by default, the cheapest model, since the agent runs once per game version.
+**7. Model-agnostic.** `--harness claude|codex|grok`, with `--model` and `--effort`.
 
 ### Cost model
 
@@ -284,7 +283,7 @@ nothing about the game.
 
 **Options.** Every command takes `--data-dir` (default `data-dir/`). Most flags also have an
 environment variable: `TESTSON_DATA_DIR`, `TESTSON_RUNNER`, `TESTSON_HARNESS`, `TESTSON_MODEL`,
-`TESTSON_EFFORT` and `TESTSON_CHROME`. With `claude` the default model is `haiku` and the default
+`TESTSON_EFFORT` and `TESTSON_CHROME`. With `claude` the default model is `sonnet` and the default
 effort `medium`; `codex` and `grok` use their own configured model.
 
 **Troubleshooting**
