@@ -56,6 +56,7 @@ enum Runner {
 enum ScriptOutcome {
     Completed,
     StepFailed,
+    FailedAfterSpin,
     VersionChanged,
     Blocked,
 }
@@ -66,6 +67,15 @@ enum ScriptOutcome {
 pub struct GameVersion {
     pub build_url: String,
     pub etag: String,
+}
+
+/// Whether two `ETag` headers name the same build. The server marks the ETag of a compressed copy as
+/// weak, `W/"…"`, and sends the strong one to a request without compression, such as the HEAD of
+/// testson, so the weak mark is ignored, as the weak comparison of HTTP does.
+#[must_use]
+pub fn same_version(one: &str, other: &str) -> bool {
+    let opaque = |etag: &str| etag.strip_prefix("W/").unwrap_or(etag).to_owned();
+    opaque(one) == opaque(other)
 }
 
 #[derive(Deserialize)]
@@ -308,6 +318,13 @@ fn date_time(name: &str, value: &str) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_weak_etag_names_the_same_version() {
+        assert!(same_version("W/\"c208\"", "\"c208\""));
+        assert!(same_version("\"c208\"", "\"c208\""));
+        assert!(!same_version("W/\"c208\"", "\"c209\""));
+    }
 
     fn report() -> Value {
         json!({

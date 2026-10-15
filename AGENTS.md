@@ -61,9 +61,10 @@ the binary, so restart it after each edit to them.
   spin once per test at the minimum stake, never above 1 €. The no-balance test never bets on an
   account with balance. The only limit it sets is the gaming session Spanish rules require before
   a real-money game loads: 15 minutes and a 1 € loss limit. Changes to the prompts must keep these
-  rules, and so must changes to `src/script.rs`: a replay spins once at most, after reading a stake
-  it checks is at most 1 €, acts on nothing after the spin, stops before betting when the version
-  of the game changed, and never runs `run-code` from a script.
+  rules, and so must changes to `src/script.rs`: a replay spins once at most, with a single press,
+  right after reading a stake it checks is at most 1 € and with no action in between, acts on
+  nothing after the spin, does not hand over to the agent in the same test once it spun, stops
+  before betting when the version of the game changed, and never runs `run-code` from a script.
 
 ## Conventions
 

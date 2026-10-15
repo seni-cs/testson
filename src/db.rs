@@ -342,8 +342,11 @@ pub fn insert_test(data_dir: &Path, game_id: &str, document: &str) -> rusqlite::
 }
 
 /// The tests that stand for `etag`, the version the game has now: those that saw it. With no
-/// `etag`, as before any test saw a version of the game, every test stands for it.
-const OF_VERSION: &str = "(?3 IS NULL OR etag = ?3)";
+/// `etag`, as before any test saw a version of the game, every test stands for it. The weak mark
+/// `W/` is ignored, as `report::same_version` does.
+const OF_VERSION: &str = "(?3 IS NULL OR
+     (CASE WHEN substr(etag, 1, 2) = 'W/' THEN substr(etag, 3) ELSE etag END)
+     = (CASE WHEN substr(?3, 1, 2) = 'W/' THEN substr(?3, 3) ELSE ?3 END))";
 
 /// Whether a test of a game in `mode` reached a verdict on version `etag` of it, `working` or
 /// `failing`. A test that ended in `test_failed` says nothing about the game.
@@ -368,7 +371,8 @@ pub fn has_verdict(
 
 /// How many tests of a game in `mode` ended in `test_failed` on version `etag` of it, the
 /// attempts that reached no verdict on it. A replay that stopped because its script no longer
-/// fits the game is not one: the agent test that follows it is.
+/// fits the game is not one: the agent test that follows it is. A replay that broke after its
+/// spin is one, since it played a round and the agent waits for the next test.
 pub fn failed_attempts(
     data_dir: &Path,
     game_id: &str,
@@ -578,6 +582,16 @@ mod tests {
         store(path, "no_balance", "working", "2026-10-15T10:05:00Z", None);
         assert!(has_verdict(path, "alpha", "real_money", Some("v1")).unwrap());
         assert!(!has_verdict(path, "alpha", "real_money", Some("v2")).unwrap());
+        // The weak mark of an ETag names the same version.
+        store(
+            path,
+            "real_money",
+            "working",
+            "2026-10-15T09:00:00Z",
+            Some("W/\"v3\""),
+        );
+        assert!(has_verdict(path, "alpha", "real_money", Some("\"v3\"")).unwrap());
+        assert!(!has_verdict(path, "alpha", "real_money", Some("\"v4\"")).unwrap());
         // A verdict that saw no version stands only while no version is known.
         assert!(!has_verdict(path, "alpha", "no_balance", Some("v1")).unwrap());
         assert!(has_verdict(path, "alpha", "no_balance", None).unwrap());

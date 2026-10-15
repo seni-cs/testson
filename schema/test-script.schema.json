@@ -51,7 +51,7 @@
           "description": "What the step is for, which decides what it may hold and how its failure is read.",
           "oneOf": [
             { "const": "action", "description": "Runs its commands, such as a search, a click or the gaming-session form. Only before the spin." },
-            { "const": "spin", "description": "Presses spin once at the minimum stake. At most one per script, exactly one in real_money." },
+            { "const": "spin", "description": "Presses spin once at the minimum stake: one click, press or mousedown, which only mousemove or hover may come before, and only the mouseup of that mousedown after. At most one per script, exactly one in real_money. Nothing between the read of the stake and the spin may act." },
             { "const": "pause", "description": "Waits timeout_ms, for an animation that gives no other sign it ended." },
             { "const": "expect", "description": "Probes until the text matches, within timeout_ms, such as for the game to be ready or for the message a mode expects." },
             { "const": "read", "description": "Probes until the text matches, within timeout_ms, and keeps the value as the reading in name. balance_after is probed until it is the balance the stake and the win leave." }
@@ -99,6 +99,10 @@
         },
         "screenshot": {
           "description": "Take a screenshot once the step has run.",
+          "type": "boolean"
+        },
+        "optional": {
+          "description": "Only for an action that handles what some visits show and others do not, such as the notice of a recent gaming session, the gaming-session form, a cookie banner or the intro screen of the game. When one of its commands fails, the replay skips the rest of the step and goes on.",
           "type": "boolean"
         }
       }

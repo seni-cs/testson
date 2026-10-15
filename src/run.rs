@@ -156,12 +156,23 @@ impl Outcome {
         self.document.get(key).and_then(Value::as_str).unwrap_or("")
     }
 
-    /// `step_failed` or `version_changed` when a replay stopped because its script no longer
-    /// fits the game, which the agent then tests again.
+    /// Why the script of a replay is retired, `step_failed` or `version_changed`, when it
+    /// stopped because the script no longer fits the game, which the agent then tests again. A
+    /// step that failed after the spin retires it as `step_failed`.
     #[must_use]
-    pub fn script_broke(&self) -> Option<&str> {
-        Some(self.text("script_outcome"))
-            .filter(|outcome| matches!(*outcome, "step_failed" | "version_changed"))
+    pub fn script_broke(&self) -> Option<&'static str> {
+        match self.text("script_outcome") {
+            "step_failed" | "failed_after_spin" => Some("step_failed"),
+            "version_changed" => Some("version_changed"),
+            _ => None,
+        }
+    }
+
+    /// The replay broke after it pressed spin. The agent would play another round, so it tests
+    /// the game at a later test instead of now.
+    #[must_use]
+    pub fn broke_after_spin(&self) -> bool {
+        self.text("script_outcome") == "failed_after_spin"
     }
 
     /// `working`, `failing`, or `test_failed`.
@@ -256,12 +267,21 @@ pub fn test_game(
         match db::active_script(data_dir, &game.id, mode.as_str())? {
             Some(stored) => {
                 let outcome = replay_script(data_dir, game, url, mode, &stored, current.as_ref())?;
-                let broke = outcome.script_broke().map(str::to_owned);
+                let broke = outcome.script_broke();
+                let after_spin = outcome.broke_after_spin();
                 tested.outcomes.push(outcome);
                 let Some(reason) = broke else {
                     return Ok(tested);
                 };
-                db::retire_script(data_dir, stored.id, &reason)?;
+                db::retire_script(data_dir, stored.id, reason)?;
+                if after_spin {
+                    eprintln!(
+                        "warning: the script of {} ({mode}) failed after its spin, so the agent \
+                         tests it at the next test rather than play another round now.",
+                        game.name
+                    );
+                    return Ok(tested);
+                }
                 if runner == Runner::Script {
                     return Ok(tested);
                 }
@@ -701,7 +721,7 @@ fn written_script(prepared: &Prepared, document: &Value) -> Option<String> {
         let reported = document
             .pointer("/game_version/etag")
             .and_then(Value::as_str);
-        if reported.is_some_and(|etag| etag != script.game_version.etag) {
+        if reported.is_some_and(|etag| !report::same_version(etag, &script.game_version.etag)) {
             return Err(anyhow!(
                 "it was written for ETag {}, but the report names {}",
                 script.game_version.etag,
