@@ -10,8 +10,8 @@ const STATUS_LABELS = {
 };
 
 // Write the day of a date, as it is in `timeZone` or, without one, where the page is read. A day
-// stored without a time, such as the one a game was added on, is the day in UTC: it is written
-// in UTC to stay the same day, and so is any day that is shown beside it.
+// stored without a time, such as the one a game was added on, belongs to no time zone: it is
+// written in the UTC it is read in, to stay the same day.
 function formatDay(date, timeZone) {
     return new Date(date).toLocaleDateString(LOCALE, { dateStyle: "medium", timeZone });
 }
