@@ -114,12 +114,32 @@
       "minimum": 0
     },
     "balance_before": {
-      "description": "Account balance shown before the first bet was tried, as written on the page, such as '12,40 €'.",
+      "description": "Betsson account balance shown before the first bet was tried, as written on the page, such as '12,40 €'.",
       "type": "string",
       "minLength": 1
     },
     "balance_after": {
-      "description": "Account balance shown once the round settled or the bet was refused, as written on the page.",
+      "description": "Betsson account balance shown once the round settled or the bet was refused, as written on the page.",
+      "type": "string",
+      "minLength": 1
+    },
+    "game_balance_before": {
+      "description": "Balance shown inside the game before the spin, as written, such as '12,40 €'.",
+      "type": "string",
+      "minLength": 1
+    },
+    "game_balance_after": {
+      "description": "Balance shown inside the game once the round settled or the bet was refused, as written.",
+      "type": "string",
+      "minLength": 1
+    },
+    "currency": {
+      "description": "Currency the balances and the stake are shown in, such as '€' or 'EUR'.",
+      "type": "string",
+      "minLength": 1
+    },
+    "language": {
+      "description": "Language of the message that the balance is not enough, as a code such as 'es', or the message as shown.",
       "type": "string",
       "minLength": 1
     },
