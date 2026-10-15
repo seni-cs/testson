@@ -1,0 +1,9 @@
+Mode no_balance: the account has no balance, and the test checks that trying to bet shows a message saying so.
+- Before opening the game, the account balance must be zero or below the lowest stake a slot allows (0,10 €). If it is more, this is the wrong account: do not open the game, and stop with status "test_failed" saying the no-balance account has balance.
+- Press spin once at the minimum stake, and no more. Never deposit to get past the message, and close any deposit window it opens.
+- After pressing, wait a few seconds and screenshot what the game shows. Copy the message text into the step that pressed spin.
+
+Expected criteria (all must pass for status "working"):
+1. The game launches in real-money mode, with the empty account balance. If the lobby refuses to open the game and shows a message that the balance is not enough, that also counts: screenshot it and do not press anything else.
+2. Trying to bet shows a clear message that the balance is not enough (such as "Saldo insuficiente", "Fondos insuficientes", or "Insufficient funds"), and no round is played.
+If no message appears, a round is played anyway, the game freezes, or it shows an unrelated error, status is "failing".

@@ -1,17 +1,17 @@
-//! The watch over Novedades: what is new there, the queue of games waiting for a demo test, and
+//! The watch over the games of the provider: which of them still need a test in each mode, and
 //! the lock that keeps to one watch at a time. What it finds is kept in the database.
 
-use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use crate::catalog::{Fetcher, Game, NOVEDADES_URL, fetch_novedades};
+use crate::catalog::{Fetcher, Game, PROVIDER, fetch_provider_games};
 use crate::db;
+use crate::run::Mode;
 
-/// How many checks may try the demo test of a game without a verdict before it leaves the queue.
+/// How many tests of a game in one mode may end without a verdict before the watch stops trying.
 pub const MAX_ATTEMPTS: u32 = 3;
 
 /// Exclusive lock held for the life of one watch process.
@@ -72,98 +72,68 @@ pub fn parse_interval(value: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs(seconds))
 }
 
-/// Compares the live Novedades collection with the one stored at the previous check, and tests
-/// what is new.
+/// Stores the games the catalogue has of the provider, and tests each in every mode it has no
+/// verdict in yet.
 ///
-/// The first check stores the current games and does not test them. Later checks queue the games
-/// that were not in the collection before and call `run_one` for each queued game.
-///
-/// `run_one` returns whether the test reached a verdict on the game. A game whose test did not
-/// stays queued for the next check, until it has had [`MAX_ATTEMPTS`]. An error from `run_one`
-/// means the test could not start, such as a missing tool or session: it stops the check and
-/// counts no attempt, since it says nothing about the game.
+/// `run_one` returns whether that test reached a verdict on the game. A test that did not, such
+/// as one that ended in `test_failed`, is tried again at the next check, until the game has had
+/// [`MAX_ATTEMPTS`] in that mode; then only `testson test` tries it. An error from `run_one` means
+/// the test could not start, such as a missing tool or session: it stops the check and stores no
+/// test, so it counts no attempt. A game that leaves the catalogue stays on the dashboard.
 ///
 /// # Errors
 ///
 /// Fails when the catalogue or the database cannot be read or written, when a test could not
-/// start, or when a demo test did not finish.
+/// start, or when a test did not reach a verdict.
 pub fn check(
     data_dir: &Path,
     fetcher: &impl Fetcher,
-    mut run_one: impl FnMut(&Game) -> Result<bool>,
+    mut run_one: impl FnMut(&Game, Mode) -> Result<bool>,
 ) -> Result<()> {
-    let current = fetch_novedades(fetcher)?;
-    println!("Novedades: {} games ({NOVEDADES_URL})", current.len());
-    let previous = db::select_new_games(data_dir)?;
-    if previous.is_empty() {
-        db::record_new_games(data_dir, &current, &[])?;
-        println!("Baseline saved in the database.");
-        println!(
-            "No earlier list, so the {} games already on Novedades are not tested.",
-            current.len()
-        );
-        println!("The next run demo-tests only games that appear after this snapshot.");
-        return Ok(());
-    }
-
-    let added = missing_from(&previous, &current);
-    let removed = missing_from(&current, &previous);
-    if added.is_empty() {
-        println!("No new games since the last check.");
-    } else {
-        println!("Added since last check: {}", added.len());
-        for game in &added {
-            println!("  + {}", game.name);
+    let games = fetch_provider_games(fetcher)?;
+    println!("{PROVIDER}: {} games", games.len());
+    db::upsert_games(data_dir, &games)?;
+    let mut pending = Vec::new();
+    let mut given_up = Vec::new();
+    for game in &games {
+        for mode in Mode::ALL {
+            if db::has_verdict(data_dir, &game.id, mode.as_str())? {
+                continue;
+            }
+            if db::failed_attempts(data_dir, &game.id, mode.as_str())? >= MAX_ATTEMPTS {
+                given_up.push(format!("{} ({mode})", game.name));
+            } else {
+                pending.push((game, mode));
+            }
         }
     }
-    if !removed.is_empty() {
-        println!("Left Novedades: {}", removed.len());
-        for game in &removed {
-            println!("  - {}", game.name);
-        }
-    }
-    let queued: Vec<&str> = added.iter().map(|game| game.id.as_str()).collect();
-    db::record_new_games(data_dir, &current, &queued)?;
-    let pending = db::select_pending_games(data_dir)?;
     println!("Pending tests: {}", pending.len());
+    if !given_up.is_empty() {
+        eprintln!(
+            "Not retried after {MAX_ATTEMPTS} attempts without a verdict, test them by hand with \
+             testson test: {}",
+            given_up.join(", ")
+        );
+    }
 
     let mut failed = Vec::new();
-    for game in pending {
-        println!("Testing new game: {}", game.name);
-        if run_one(&game)? {
-            db::dequeue(data_dir, &game.id)?;
-            println!("Test finished: {}", game.name);
-            continue;
-        }
-        let attempts = db::add_attempt(data_dir, &game.id)?;
-        if attempts >= MAX_ATTEMPTS {
-            db::dequeue(data_dir, &game.id)?;
-            eprintln!(
-                "Test did not finish: {name}. After {attempts} attempts it leaves the queue; \
-                 test it by hand with: testson test {name:?}",
-                name = game.name
-            );
+    for (game, mode) in pending {
+        println!("Testing {} ({mode})", game.name);
+        if run_one(game, mode)? {
+            println!("Test finished: {} ({mode})", game.name);
         } else {
+            let attempts = db::failed_attempts(data_dir, &game.id, mode.as_str())?;
             eprintln!(
-                "Test did not finish: {} (attempt {attempts} of {MAX_ATTEMPTS}). It stays pending.",
+                "Test did not finish: {} ({mode}), attempt {attempts} of {MAX_ATTEMPTS}.",
                 game.name
             );
+            failed.push(format!("{} ({mode})", game.name));
         }
-        failed.push(game.name);
     }
     if !failed.is_empty() {
-        bail!("demo test failed for: {}", failed.join(", "));
+        bail!("tests did not finish for: {}", failed.join(", "));
     }
     Ok(())
-}
-
-/// Games in `current` that are not in `previous`.
-fn missing_from<'a>(previous: &[Game], current: &'a [Game]) -> Vec<&'a Game> {
-    let known: HashSet<&str> = previous.iter().map(|game| game.id.as_str()).collect();
-    current
-        .iter()
-        .filter(|game| !known.contains(game.id.as_str()))
-        .collect()
 }
 
 #[cfg(test)]
@@ -189,8 +159,9 @@ mod tests {
             .iter()
             .map(|name| {
                 let id = name.to_lowercase();
-                format!(r#"{{"id":"{id}","name":"{name}","collections":["NewGames"]}}"#)
+                format!(r#"{{"id":"{id}","name":"{name}","provider":"PragmaticPlay"}}"#)
             })
+            .chain([r#"{"id":"other","name":"Other","provider":"Other"}"#.to_owned()])
             .collect();
         format!("[{}]", items.join(","))
     }
@@ -201,115 +172,104 @@ mod tests {
         dir
     }
 
-    fn pending(data_dir: &Path) -> Vec<String> {
-        db::select_pending_games(data_dir)
-            .unwrap()
-            .into_iter()
-            .map(|game| game.name)
-            .collect()
+    /// Store a test of `game_id` in `mode` that ended in `status`.
+    fn store(data_dir: &Path, game_id: &str, mode: Mode, status: &str) {
+        let document = serde_json::json!({
+            "schema_version": 2,
+            "mode": mode.as_str(),
+            "status": status,
+            "summary": "Stored by a test.",
+            "started_at": "2026-10-15T10:00:00Z",
+            "duration_ms": 1,
+            "steps": [],
+        });
+        db::insert_test(data_dir, game_id, &document.to_string()).unwrap();
     }
 
     #[test]
-    fn first_check_is_a_baseline_and_the_next_tests_only_new_games() {
-        let dir = data_dir();
-        let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
-        check(dir.path(), &fetcher, |_| -> Result<bool> {
-            panic!("baseline must not test")
-        })
-        .unwrap();
-
-        *fetcher.0.borrow_mut() = catalog(&["Alpha", "Beta"]);
-        let mut tested = Vec::new();
-        let error = check(dir.path(), &fetcher, |game| {
-            tested.push(game.name.clone());
-            Ok(false)
-        })
-        .unwrap_err();
-        assert_eq!(tested, ["Beta"]);
-        assert!(error.to_string().contains("Beta"));
-        assert_eq!(pending(dir.path()), ["Beta"]);
-
-        check(dir.path(), &fetcher, |_| Ok(true)).unwrap();
-        assert_eq!(pending(dir.path()), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_game_without_a_verdict_leaves_the_queue_after_its_attempts() {
-        let dir = data_dir();
-        let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
-        check(dir.path(), &fetcher, |_| Ok(true)).unwrap();
-        *fetcher.0.borrow_mut() = catalog(&["Alpha", "Beta"]);
-        for attempt in 1..=MAX_ATTEMPTS {
-            assert!(check(dir.path(), &fetcher, |_| Ok(false)).is_err());
-            let left = if attempt < MAX_ATTEMPTS {
-                vec!["Beta"]
-            } else {
-                vec![]
-            };
-            assert_eq!(pending(dir.path()), left);
-        }
-    }
-
-    #[test]
-    fn a_test_that_cannot_start_counts_no_attempt() {
-        let dir = data_dir();
-        let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
-        check(dir.path(), &fetcher, |_| Ok(true)).unwrap();
-        *fetcher.0.borrow_mut() = catalog(&["Alpha", "Beta"]);
-        for _ in 0..=MAX_ATTEMPTS {
-            assert!(check(dir.path(), &fetcher, |_| bail!("no session")).is_err());
-        }
-        assert_eq!(pending(dir.path()), ["Beta"]);
-    }
-
-    #[test]
-    fn every_game_seen_shows_on_the_dashboard() {
-        let dir = data_dir();
-        let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
-        check(dir.path(), &fetcher, |_| Ok(true)).unwrap();
-        *fetcher.0.borrow_mut() = catalog(&["Beta"]);
-        check(dir.path(), &fetcher, |_| Ok(true)).unwrap();
-        let names: Vec<String> = db::select_new_games(dir.path())
-            .unwrap()
-            .into_iter()
-            .map(|game| game.name)
-            .collect();
-        assert_eq!(names, ["Beta"]);
-        assert!(db::game_exists(dir.path(), "alpha").unwrap());
-        assert!(db::game_exists(dir.path(), "beta").unwrap());
-    }
-
-    #[test]
-    fn a_game_that_comes_back_is_new_again() {
+    fn tests_every_game_of_the_provider_in_both_modes() {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new(catalog(&["Alpha", "Beta"])));
-        check(dir.path(), &fetcher, |_| -> Result<bool> {
-            panic!("baseline must not test")
-        })
-        .unwrap();
-        *fetcher.0.borrow_mut() = catalog(&["Alpha"]);
-        check(dir.path(), &fetcher, |_| -> Result<bool> {
-            panic!("nothing is new")
-        })
-        .unwrap();
-        *fetcher.0.borrow_mut() = catalog(&["Alpha", "Beta"]);
         let mut tested = Vec::new();
-        check(dir.path(), &fetcher, |game| {
-            tested.push(game.id.clone());
+        check(dir.path(), &fetcher, |game, mode| {
+            tested.push((game.id.clone(), mode));
             Ok(true)
         })
         .unwrap();
-        assert_eq!(tested, ["beta"]);
+        assert_eq!(
+            tested,
+            [
+                ("alpha".to_owned(), Mode::RealMoney),
+                ("alpha".to_owned(), Mode::NoBalance),
+                ("beta".to_owned(), Mode::RealMoney),
+                ("beta".to_owned(), Mode::NoBalance),
+            ]
+        );
+        assert!(db::game_exists(dir.path(), "alpha").unwrap());
+        assert!(!db::game_exists(dir.path(), "other").unwrap());
     }
 
     #[test]
-    fn an_empty_collection_leaves_the_snapshot_alone() {
+    fn only_a_verdict_takes_a_game_and_mode_off_the_list() {
+        let dir = data_dir();
+        let fetcher = Scripted(RefCell::new(catalog(&["Alpha", "Beta"])));
+        check(dir.path(), &fetcher, |_, _| Ok(true)).unwrap();
+        store(dir.path(), "alpha", Mode::RealMoney, "working");
+        store(dir.path(), "alpha", Mode::NoBalance, "failing");
+        store(dir.path(), "beta", Mode::RealMoney, "test_failed");
+
+        let mut tested = Vec::new();
+        let error = check(dir.path(), &fetcher, |game, mode| {
+            tested.push((game.id.clone(), mode));
+            Ok(false)
+        })
+        .unwrap_err();
+        assert_eq!(
+            tested,
+            [
+                ("beta".to_owned(), Mode::RealMoney),
+                ("beta".to_owned(), Mode::NoBalance),
+            ]
+        );
+        assert!(error.to_string().contains("Beta (real-money)"));
+    }
+
+    #[test]
+    fn stops_retrying_after_the_maximum_attempts() {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
-        check(dir.path(), &fetcher, |_| Ok(false)).unwrap();
-        *fetcher.0.borrow_mut() = "[]".to_owned();
-        assert!(check(dir.path(), &fetcher, |_| Ok(false)).is_err());
-        assert_eq!(db::select_new_games(dir.path()).unwrap().len(), 1);
+        check(dir.path(), &fetcher, |_, _| Ok(true)).unwrap();
+        for _ in 0..MAX_ATTEMPTS {
+            store(dir.path(), "alpha", Mode::RealMoney, "test_failed");
+        }
+        let mut tested = Vec::new();
+        check(dir.path(), &fetcher, |_, mode| {
+            tested.push(mode);
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(tested, [Mode::NoBalance]);
+    }
+
+    #[test]
+    fn a_test_that_cannot_start_stops_the_check() {
+        let dir = data_dir();
+        let fetcher = Scripted(RefCell::new(catalog(&["Alpha", "Beta"])));
+        let mut runs = 0;
+        let error = check(dir.path(), &fetcher, |_, _| {
+            runs += 1;
+            Err(anyhow::anyhow!("playwright-cli is not on PATH"))
+        })
+        .unwrap_err();
+        assert_eq!(runs, 1);
+        assert!(error.to_string().contains("playwright-cli"));
+    }
+
+    #[test]
+    fn a_catalogue_without_the_provider_is_an_error() {
+        let dir = data_dir();
+        let fetcher = Scripted(RefCell::new("[]".to_owned()));
+        assert!(check(dir.path(), &fetcher, |_, _| panic!("nothing to test")).is_err());
     }
 
     #[test]

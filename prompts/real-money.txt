@@ -1,0 +1,10 @@
+Mode real_money: the account has balance, and one round is played for real money.
+- Before opening the game, the account balance must be above zero. If it is zero, stop with status "test_failed" and say the real-money account needs balance.
+- Press spin exactly once, at the minimum stake. If the lowest stake the game allows is above 1 €, or above the balance, do not press it: stop with status "test_failed" and say why.
+- If that one round awards free spins or a bonus, let the feature finish without paying for anything, then stop. Do not start a second round, even if the first one was rejected or did not settle.
+- Wait until the round settles (reels stop, win or loss is shown) and the balance updates.
+
+Expected criteria (all must pass for status "working"):
+1. The game launches in real-money mode and shows the account balance.
+2. One round at the minimum stake completes, and the balance changes by the stake and the win, if any.
+If the game does not launch, the round errors or never settles, or the balance is wrong, status is "failing".

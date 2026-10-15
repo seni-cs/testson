@@ -1,13 +1,23 @@
 # testson
 
-Tests Betsson casino games in demo mode (Modo prueba), and shows the results on a dashboard.
+Tests every Pragmatic Play game of the Betsson casino with two test accounts, and shows the
+results on a dashboard.
+
+Each game is tested twice, in real-money mode, never in demo mode:
+
+| Mode         | Account        | What it checks                                                      |
+| ------------ | -------------- | ------------------------------------------------------------------- |
+| `real-money` | Has balance    | One round at the minimum stake completes and the balance follows it |
+| `no-balance` | Has no balance | Trying to bet shows a message that the balance is not enough        |
 
 An AI coding agent (Claude Code, Codex, or Grok) drives the browser through `playwright-cli`. It
-never places a real-money bet: when demo mode is missing, the game is reported as failing. Test
-one game by name, or watch [Novedades](https://www.betsson.es/casino/novedades) and test each game
-that appears there. Every test is stored in SQLite, and the dashboard lists the games with the
-outcome of their latest test and shows every test step by step, with its screenshots, video,
-console messages and failed requests.
+spends real money in the real-money test: one spin at the minimum stake, never above 1 €, with no
+autoplay, bonus buy or deposit. When Betsson asks for the gaming session Spanish rules require
+before a real-money game loads, the agent starts one of 15 minutes with a 1 € loss limit. Test one
+game by name, or `watch` the catalogue and test every Pragmatic Play game in both modes. Every test
+is stored in SQLite, and the dashboard lists the games with the outcome of their latest test in
+each mode and shows every test step by step, with its screenshots, video, console messages, and
+failed requests.
 
 ## Install
 
@@ -43,15 +53,23 @@ and can run while it serves.
 
 ## Session
 
-`data-dir/session-block.txt` is the only copy of the login. Each test copies its statements into
-a private `restore-session.js` in its run directory, which the agent runs by its path, so the login
-is never in the prompt. The run stops before calling the agent while any `REPLACE_WITH_`
-placeholder remains.
-If the file is missing, the run continues without a login and the test should come back as
-`test_failed`.
+Each mode logs in with its own account, from its own file in the data directory:
 
-On [betsson.es](https://www.betsson.es), while logged in, paste this into the DevTools console. It
-copies the four `localStorage.setItem` lines.
+| Mode         | Session file                      |
+| ------------ | --------------------------------- |
+| `real-money` | `data-dir/session-real-money.txt` |
+| `no-balance` | `data-dir/session-no-balance.txt` |
+
+The file is the only copy of that login. Each test of a mode copies its statements into a private
+`restore-session.js` in its run directory, which the agent runs by its path, so the login is never
+in the prompt. The run stops before calling the agent while any `REPLACE_WITH_` placeholder
+remains.
+If the file is missing, the run continues without a login and the test should come back as
+`test_failed`. A swapped file is caught too: the real-money test stops when the balance is zero,
+and the no-balance test stops, before opening the game, when the account has balance.
+
+On [betsson.es](https://www.betsson.es), logged in with the account of the mode, paste this into
+the DevTools console. It copies the four `localStorage.setItem` lines.
 
 ```javascript
 (() => {
@@ -72,21 +90,24 @@ copies the four `localStorage.setItem` lines.
     return `localStorage.setItem('${key}', '${escaped}');`;
   }).join("\n");
   copy(text);
-  return "Copied 4 lines. Paste them into data-dir/session-block.txt.";
+  return "Copied 4 lines. Paste them into the session file of this account.";
 })();
 ```
 
-Paste the copied lines into `data-dir/session-block.txt`. Lines starting with `//` or `#` are
-comments. Refresh it when the site asks you to log in again, or when the demo button no longer
-appears after hover.
+Paste the copied lines into the session file of that account. Lines starting with `//` or `#` are
+comments. Refresh it when the site asks you to log in again. Log out of one account before you log
+in to the other, so the two files never hold the same session.
 
 ## Test one game
 
 ```sh
-cargo run -- test "Los Piratas Golfetes"
-cargo run -- test "Los Piratas Golfetes" --url "https://www.betsson.es/casino"
-cargo run -- test "Los Piratas Golfetes" --harness codex --model gpt-5.5
+cargo run -- test "Big Bass Blast"
+cargo run -- test "Big Bass Blast" --mode no-balance
+cargo run -- test "Big Bass Blast" --url "https://www.betsson.es/casino"
+cargo run -- test "Big Bass Blast" --harness codex --model gpt-5.5
 ```
+
+Both modes run, one after the other, unless `--mode` picks one.
 
 The game is looked up by name in the public games catalogue, which gives its identifier, provider
 and image. A game spelt exactly as given wins over one that only differs in case. When the
@@ -94,9 +115,9 @@ catalogue cannot be read or does not have the game, the stored game with that na
 is, and only when there is none is a new one stored, under an identifier made from its name. The
 URL defaults to `https://www.betsson.es/casino` and must be `https` on a `betsson` host.
 
-The command prints the status, summary, video, the report, where the Playwright trace is and the
-address of the test on the dashboard. It exits 0 only when the game is `working` and the agent CLI
-exited cleanly.
+For each mode, the command prints the status, summary, video, the report, where the Playwright
+trace is and the address of the test on the dashboard. It exits 0 only when every test is
+`working` and the agent CLI exited cleanly.
 
 A run may take 20 minutes. One that takes longer is stopped and stored as `test_failed`. Either
 way, testson then closes the browser the agent opened.
@@ -106,20 +127,20 @@ never links it. Open it locally with `npx playwright show-trace data-dir/runs/<r
 
 A test ends in one of three statuses, as `schema/test-game.schema.json` defines them:
 
-| Status        | Meaning                                                                        |
-| ------------- | ------------------------------------------------------------------------------ |
-| `working`     | The game launched in demo mode and a full round completed                      |
-| `failing`     | The game did not: no demo mode, or the round could not be completed            |
-| `test_failed` | The test itself broke, such as an expired session; it says nothing of the game |
+| Status        | Meaning                                                                          |
+| ------------- | -------------------------------------------------------------------------------- |
+| `working`     | The game did what the mode expects: a round completed, or the bet was refused    |
+| `failing`     | The game did not: it did not launch, the round broke, or no message appeared     |
+| `test_failed` | The test itself broke, such as an expired session or the wrong account           |
 
 Every report is validated against the schema. When the agent returns no report, or one that does
 not follow the schema, the test is stored as `test_failed` with the reason, and the model log keeps
 what the agent said.
 
-## Watch Novedades
+## Watch the Pragmatic Play games
 
-`watch` reads the New Games collection from the public games API. Listing does not need a login.
-A demo test still needs `session-block.txt`.
+`watch` reads the games whose provider is `PragmaticPlay` from the public games API, about 300 of
+them. Listing does not need a login. The tests need both session files.
 
 ```sh
 cargo run -- watch --list
@@ -129,14 +150,16 @@ cargo run -- watch --every 30m --harness codex --model gpt-5.5
 
 `--list` prints the identifier and name of each game and does not save or test.
 
-The first check stores the games already on Novedades and does not test them. Every check adds
-the games to the dashboard, and a later check runs the same demo test as `test` for each game
-that was not on Novedades at the check before. Games that leave Novedades are reported and stay on
-the dashboard. A game whose test is `working` or `failing` leaves the queue. A test that ends in
-`test_failed`, or a run that stored no test, keeps the game queued for the next check, up to three
-attempts; after that it leaves the queue, and you can test it by hand with `testson test`. A test
-that cannot start, such as with the session file still holding placeholders or a tool missing,
-stops the check without counting an attempt.
+To put every game on the dashboard without testing any, run `cargo run -- sync`.
+
+Every check adds the games to the dashboard and runs the same tests as `test` for each game and
+mode that has no `working` or `failing` test yet. A test that ends in `test_failed` is tried again
+at the next check, up to three attempts in that mode; after that the watch leaves it alone, and you
+can test it by hand with `testson test`. A test that cannot start, such as with a session file
+still holding placeholders or a tool missing, stops the check without counting an attempt. A game
+that leaves the catalogue stays on the dashboard. The first check tests every game in both modes,
+which spends one minimum stake per game on the real-money account. Run `test` to test a game
+again.
 
 `--every` repeats the check until you stop it. The interval is at least 60 seconds (`30m`, `1h`,
 or a number of seconds). One watch runs at a time per data directory.
@@ -171,39 +194,44 @@ Adding another agent CLI is one `Harness` variant in `src/harness.rs`, plus its 
 | `src/main.rs`                  | The CLI and the start of the server                             |
 | `src/router.rs`                | The routes: the JSON API, the pages and the assets              |
 | `src/db.rs`                    | The migrations and every query, grouped by table                |
-| `src/catalog.rs`               | The public games catalogue and its Novedades collection         |
-| `src/watch.rs`                 | The watch over Novedades, its queue and its lock                |
-| `src/run.rs`                   | One test: its directories, the agent run and the stored test    |
+| `src/catalog.rs`               | The public games catalogue and the games of Pragmatic Play      |
+| `src/watch.rs`                 | The watch over those games and its lock                         |
+| `src/run.rs`                   | One test in one mode: its run, the agent and the stored test    |
 | `src/report.rs`                | The validation of a report against the schema                   |
 | `src/harness.rs`               | The agent CLIs, model selection and the ping                    |
 | `src/events.rs`                | Readable progress from the claude and grok event streams        |
 | `src/prompt.rs`                | Filling the prompt, the session restore and the URL checks      |
 | `prompts/test-game.txt`        | The prompt sent to the agent, compiled into the binary          |
+| `prompts/real-money.txt`       | The rules and criteria of each mode, put into that prompt       |
+| `prompts/no-balance.txt`       |                                                                 |
 | `migrations/`                  | The SQL migrations, compiled into the binary                    |
 | `schema/test-game.schema.json` | The JSON Schema of a test, also compiled into the prompt        |
 | `web/`                         | The pages: plain HTML, CSS and JavaScript, compiled in as is    |
 
 A test is stored whole as a JSON document that follows the schema. The few fields the lists need,
-its status and when it started, are columns SQLite generates from the document. A game goes by
-the text identifier the catalogue gives it, such as `nyxAviator`, and a test by a number.
+its mode, its status and when it started, are columns SQLite generates from the document. Tests
+stored before the modes, with version 1 of the schema, were played in demo mode and show as Demo. A
+game goes by the text identifier the catalogue gives it, such as `nyxAviator`, and a test by a
+number.
 
 The data directory holds:
 
 ```text
 data-dir/
-  testson.db              games, tests, and the watch queue
-  session-block.txt       the login, never served
+  testson.db              games and tests
+  session-real-money.txt  the login of the account with balance, never served
+  session-no-balance.txt  the login of the account without balance, never served
   watch.lock
-  runs/<game>-<time>/     private: prompt.filled.txt, restore-session.js, model.log,
-                          report.json, .playwright-cli/traces/
-  assets/<game>-<time>/   served at /data/assets/: session.webm, screenshots/
+  runs/<game>-<mode>-<time>/    private: prompt.filled.txt, restore-session.js, model.log,
+                                report.json, .playwright-cli/traces/
+  assets/<game>-<mode>-<time>/  served at /data/assets/: session.webm, screenshots/
 ```
 
-| Route                 | Responds with                               |
-| --------------------- | ------------------------------------------- |
-| `/`                   | The list of games                           |
-| `/game/{game_id}`     | The page of a game                          |
-| `/api/games`          | Every game with its latest test             |
-| `/api/game/{game_id}` | A game and the summaries of its tests       |
-| `/api/test/{test_id}` | The JSON document of a test                 |
-| `/data/assets/...`    | The videos and images in `data-dir/assets/` |
+| Route                 | Responds with                                                |
+| --------------------- | ------------------------------------------------------------ |
+| `/`                   | The list of the Pragmatic Play games                         |
+| `/game/{game_id}`     | The page of a game                                           |
+| `/api/games`          | Every Pragmatic Play game, with its latest test of each mode |
+| `/api/game/{game_id}` | A game and the summaries of its tests                        |
+| `/api/test/{test_id}` | The JSON document of a test                                  |
+| `/data/assets/...`    | The videos and images in `data-dir/assets/`                  |

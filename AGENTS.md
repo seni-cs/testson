@@ -1,9 +1,10 @@
 # AGENTS
 
-testson tests Betsson casino games in demo mode with an AI coding agent that drives
-`playwright-cli`, and shows the results on a dashboard: a CLI that runs the agent and writes to
-SQLite, an axum server that reads it, and pages in plain HTML, CSS and JavaScript. See `README.md`
-for the layout and the routes.
+testson tests every Pragmatic Play game of the Betsson casino with two test accounts, one with
+balance that plays a real-money round and one without balance that must be told it cannot bet, with
+an AI coding agent that drives `playwright-cli`, and shows the results on a dashboard: a CLI that
+runs the agent and writes to SQLite, an axum server that reads it, and pages in plain HTML, CSS and
+JavaScript. See `README.md` for the layout and the routes.
 
 ## Checks
 
@@ -11,8 +12,8 @@ Clippy runs with the pedantic group denied, so its warnings are errors. Fix them
 allowing them.
 
 The tests never call an agent or the live site: the catalogue is read through the `Fetcher`
-trait, which they replace. Running a real test spends model tokens and needs a valid
-`session-block.txt`, so do it only when asked.
+trait, which they replace. Running a real test spends model tokens and real money and needs valid
+session files, so do it only when asked.
 
 For a change to the pages or the routes, start the server with `cargo run -- serve` from the root
 of the repository and look at the result at <http://127.0.0.1:8000>. The pages are compiled into
@@ -27,7 +28,8 @@ the binary, so restart it after each edit to them.
   are written. A change to the shape of the document starts in the schema. The schema is also
   compiled into the prompt in `prompts/test-game.txt`, so the agent sees the same one; keep the
   prompt's instructions and example in step with it, and the types in `src/report.rs`, which
-  validate every report against it.
+  validate every report against it. The rules of each mode are in `prompts/real-money.txt` and
+  `prompts/no-balance.txt`.
 - Migrations are numbered files in `migrations/`, listed in `MIGRATIONS` in `src/db.rs` and
   tracked with `user_version`. Add a new one instead of editing one that was already applied unless
   changes are not yet committed.
@@ -37,12 +39,17 @@ the binary, so restart it after each edit to them.
   share; each page has a script and a stylesheet of its own beside them. `src/router.rs` compiles
   every file in it into the binary, so a new file there needs its own line in `PAGES`.
 - `data-dir/` is ignored by git. It holds the database, the assets, the private run directories
-  and `session-block.txt`, the login. Only `data-dir/assets/` is served: nothing that holds the
-  session, such as the restore script or the Playwright trace, may be written there, and only
-  the videos and images in `ASSET_EXTENSIONS` in `src/router.rs` are served from it.
+  and the session files of the two accounts, `session-real-money.txt` and
+  `session-no-balance.txt`. Only `data-dir/assets/` is served: nothing that holds the session,
+  such as the restore script or the Playwright trace, may be written there, and only the videos
+  and images in `ASSET_EXTENSIONS` in `src/router.rs` are served from it.
 - The login never goes into the prompt: the agent restores it by running `restore-session.js` by
   its path.
-- The agent never places a real-money bet. Changes to the prompt must keep its demo-only rules.
+- The agent never plays in demo mode, never deposits, withdraws or opens the cashier, and presses
+  spin once per test at the minimum stake, never above 1 €. The no-balance test never bets on an
+  account with balance. The only limit it sets is the gaming session Spanish rules require before
+  a real-money game loads: 15 minutes and a 1 € loss limit. Changes to the prompts must keep these
+  rules.
 
 ## Conventions
 

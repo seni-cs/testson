@@ -159,6 +159,13 @@ figcaption {
     font-weight: 600;
 }
 
+/* The mode at the start, and the time and the dot together at the end. */
+.test-link .when {
+    color: var(--text-muted);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
 /* Beside the test on wide screens, where the list stays in view while the test scrolls. */
 @media (min-width: 800px) {
     .layout {

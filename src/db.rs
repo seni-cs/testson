@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_initial.sql"),
     include_str!("../migrations/002_watch.sql"),
     include_str!("../migrations/003_pending_attempts.sql"),
+    include_str!("../migrations/004_modes.sql"),
 ];
 
 /// How long a connection waits for another process to finish writing.
@@ -77,16 +78,22 @@ fn migrate(connection: &mut Connection) -> anyhow::Result<()> {
 
 // Games
 
-/// A game as the list of games shows it. Its status and the time it was tested at are those
-/// of its latest test, if any.
+/// A game as the list of games shows it, with the latest test of each mode, if any.
 #[derive(Serialize)]
 pub struct GameSummary {
     id: String,
     name: String,
     image_url: String,
     added_on: String,
-    status: Option<String>,
-    tested_at: Option<String>,
+    real_money: Option<Latest>,
+    no_balance: Option<Latest>,
+}
+
+/// The status of the latest test of a game in one mode, and when it started.
+#[derive(Serialize)]
+pub struct Latest {
+    status: String,
+    started_at: String,
 }
 
 /// A game as its own page shows it, with its tests newest first.
@@ -116,30 +123,45 @@ fn catalog_game(row: &Row<'_>) -> rusqlite::Result<catalog::Game> {
     })
 }
 
-/// Select every game, newest first.
-pub fn select_games(data_dir: &Path) -> rusqlite::Result<Vec<GameSummary>> {
+/// Select every game of `provider`, by name.
+pub fn select_games(data_dir: &Path, provider: &str) -> rusqlite::Result<Vec<GameSummary>> {
     let connection = connect(data_dir)?;
     let mut statement = connection.prepare(
         "SELECT games.id, games.name, games.image_url, games.added_on,
-                latest.status, latest.started_at
+                real_money.status, real_money.started_at,
+                no_balance.status, no_balance.started_at
          FROM games
-         LEFT JOIN tests AS latest ON latest.id = (
-             SELECT id FROM tests WHERE game_id = games.id
+         LEFT JOIN tests AS real_money ON real_money.id = (
+             SELECT id FROM tests WHERE game_id = games.id AND mode = 'real_money'
              ORDER BY started_at DESC, id DESC LIMIT 1
          )
-         ORDER BY games.added_on DESC, games.name",
+         LEFT JOIN tests AS no_balance ON no_balance.id = (
+             SELECT id FROM tests WHERE game_id = games.id AND mode = 'no_balance'
+             ORDER BY started_at DESC, id DESC LIMIT 1
+         )
+         WHERE games.provider = ?1
+         ORDER BY games.name COLLATE NOCASE, games.id",
     )?;
-    let games = statement.query_map([], |row| {
+    let games = statement.query_map([provider], |row| {
         Ok(GameSummary {
             id: row.get(0)?,
             name: row.get(1)?,
             image_url: row.get(2)?,
             added_on: row.get(3)?,
-            status: row.get(4)?,
-            tested_at: row.get(5)?,
+            real_money: latest(row, 4)?,
+            no_balance: latest(row, 6)?,
         })
     })?;
     games.collect()
+}
+
+/// The latest test whose status and start are at `index` and the column after it, if any.
+fn latest(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<Latest>> {
+    let status: Option<String> = row.get(index)?;
+    let started_at: Option<String> = row.get(index + 1)?;
+    Ok(status
+        .zip(started_at)
+        .map(|(status, started_at)| Latest { status, started_at }))
 }
 
 pub fn game_exists(data_dir: &Path, game_id: &str) -> rusqlite::Result<bool> {
@@ -201,6 +223,16 @@ pub fn upsert_game(data_dir: &Path, game: &catalog::Game) -> rusqlite::Result<()
     upsert(&connect(data_dir)?, game)
 }
 
+/// Store `games` as the catalogue describes them, all at once.
+pub fn upsert_games(data_dir: &Path, games: &[catalog::Game]) -> rusqlite::Result<()> {
+    let mut connection = connect(data_dir)?;
+    let transaction = connection.transaction()?;
+    for game in games {
+        upsert(&transaction, game)?;
+    }
+    transaction.commit()
+}
+
 fn upsert(connection: &Connection, game: &catalog::Game) -> rusqlite::Result<()> {
     connection.execute(
         "INSERT INTO games (id, name, provider, primary_type, is_available_for_fun, image_url)
@@ -229,6 +261,8 @@ fn upsert(connection: &Connection, game: &catalog::Game) -> rusqlite::Result<()>
 #[derive(Serialize)]
 pub struct TestSummary {
     id: i64,
+    /// `real_money`, `no_balance`, or `demo` for a test stored before the modes.
+    mode: String,
     status: String,
     started_at: String,
 }
@@ -239,7 +273,7 @@ fn select_test_summaries(
     game_id: &str,
 ) -> rusqlite::Result<Vec<TestSummary>> {
     let mut statement = connection.prepare(
-        "SELECT id, status, started_at
+        "SELECT id, mode, status, started_at
          FROM tests
          WHERE game_id = ?1
          ORDER BY started_at DESC, id DESC",
@@ -247,8 +281,9 @@ fn select_test_summaries(
     let tests = statement.query_map([game_id], |row| {
         Ok(TestSummary {
             id: row.get(0)?,
-            status: row.get(1)?,
-            started_at: row.get(2)?,
+            mode: row.get(1)?,
+            status: row.get(2)?,
+            started_at: row.get(3)?,
         })
     })?;
     tests.collect()
@@ -273,73 +308,27 @@ pub fn insert_test(data_dir: &Path, game_id: &str, document: &str) -> rusqlite::
     Ok(connection.last_insert_rowid())
 }
 
-// The watch over Novedades and its queue
-
-/// Select the games that were in the New Games collection at the latest check, by name.
-pub fn select_new_games(data_dir: &Path) -> rusqlite::Result<Vec<catalog::Game>> {
-    let connection = connect(data_dir)?;
-    let mut statement = connection.prepare(&format!(
-        "SELECT {CATALOG_COLUMNS} FROM games WHERE in_new_games = 1 ORDER BY name, id"
-    ))?;
-    let games = statement.query_map([], catalog_game)?;
-    games.collect()
-}
-
-/// Store `games` as the whole New Games collection, and queue the ones in `queued` for a demo
-/// test, all at once so that an interrupted check leaves the previous collection in place.
-pub fn record_new_games(
-    data_dir: &Path,
-    games: &[catalog::Game],
-    queued: &[&str],
-) -> rusqlite::Result<()> {
-    let mut connection = connect(data_dir)?;
-    let transaction = connection.transaction()?;
-    transaction.execute(
-        "UPDATE games SET in_new_games = 0 WHERE in_new_games = 1",
-        [],
-    )?;
-    for game in games {
-        upsert(&transaction, game)?;
-        transaction.execute(
-            "UPDATE games SET in_new_games = 1 WHERE id = ?1",
-            [&game.id],
-        )?;
-    }
-    for game_id in queued {
-        transaction.execute(
-            "INSERT INTO pending_tests (game_id) VALUES (?1) ON CONFLICT DO NOTHING",
-            [game_id],
-        )?;
-    }
-    transaction.commit()
-}
-
-/// Select the games waiting for a demo test, in the order they were queued in.
-pub fn select_pending_games(data_dir: &Path) -> rusqlite::Result<Vec<catalog::Game>> {
-    let connection = connect(data_dir)?;
-    let mut statement = connection.prepare(&format!(
-        "SELECT {CATALOG_COLUMNS}
-         FROM pending_tests
-         JOIN games ON games.id = pending_tests.game_id
-         ORDER BY pending_tests.queued_at, games.id"
-    ))?;
-    let games = statement.query_map([], catalog_game)?;
-    games.collect()
-}
-
-/// Count one more attempt at the demo test of a queued game, and return how many it has had.
-pub fn add_attempt(data_dir: &Path, game_id: &str) -> rusqlite::Result<u32> {
+/// Whether a test of a game in `mode` reached a verdict on it, `working` or `failing`. A test
+/// that ended in `test_failed` says nothing about the game.
+pub fn has_verdict(data_dir: &Path, game_id: &str, mode: &str) -> rusqlite::Result<bool> {
     connect(data_dir)?.query_row(
-        "UPDATE pending_tests SET attempts = attempts + 1 WHERE game_id = ?1 RETURNING attempts",
-        [game_id],
+        "SELECT EXISTS (
+             SELECT 1 FROM tests
+             WHERE game_id = ?1 AND mode = ?2 AND status IN ('working', 'failing')
+         )",
+        [game_id, mode],
         |row| row.get(0),
     )
 }
 
-/// Take a game off the queue of games waiting for a demo test.
-pub fn dequeue(data_dir: &Path, game_id: &str) -> rusqlite::Result<()> {
-    connect(data_dir)?.execute("DELETE FROM pending_tests WHERE game_id = ?1", [game_id])?;
-    Ok(())
+/// How many tests of a game in `mode` ended in `test_failed`, the attempts that reached no
+/// verdict on it.
+pub fn failed_attempts(data_dir: &Path, game_id: &str, mode: &str) -> rusqlite::Result<u32> {
+    connect(data_dir)?.query_row(
+        "SELECT count(*) FROM tests WHERE game_id = ?1 AND mode = ?2 AND status = 'test_failed'",
+        [game_id, mode],
+        |row| row.get(0),
+    )
 }
 
 #[cfg(test)]
@@ -382,11 +371,27 @@ mod tests {
     }
 
     #[test]
-    fn counts_the_attempts_of_a_queued_game() {
+    fn reads_verdicts_and_attempts_by_mode() {
         let dir = tempfile::tempdir().unwrap();
         setup(dir.path()).unwrap();
-        record_new_games(dir.path(), &[game("alpha", "Alpha")], &["alpha"]).unwrap();
-        assert_eq!(add_attempt(dir.path(), "alpha").unwrap(), 1);
-        assert_eq!(add_attempt(dir.path(), "alpha").unwrap(), 2);
+        upsert_games(dir.path(), &[game("alpha", "Alpha")]).unwrap();
+        let store = |mode: &str, status: &str| {
+            let document = serde_json::json!({ "mode": mode, "status": status,
+                                               "started_at": "2026-10-15T10:00:00Z" });
+            insert_test(dir.path(), "alpha", &document.to_string()).unwrap();
+        };
+        store("real_money", "test_failed");
+        store("real_money", "test_failed");
+        store("no_balance", "working");
+        assert!(!has_verdict(dir.path(), "alpha", "real_money").unwrap());
+        assert!(has_verdict(dir.path(), "alpha", "no_balance").unwrap());
+        assert_eq!(
+            failed_attempts(dir.path(), "alpha", "real_money").unwrap(),
+            2
+        );
+        assert_eq!(
+            failed_attempts(dir.path(), "alpha", "no_balance").unwrap(),
+            0
+        );
     }
 }

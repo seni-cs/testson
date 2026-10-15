@@ -5,6 +5,9 @@ use url::Url;
 
 pub const TEMPLATE: &str = include_str!("../prompts/test-game.txt");
 pub const REPORT_SCHEMA: &str = include_str!("../schema/test-game.schema.json");
+/// The rules and criteria of each mode, put into the template at `{{MODE_INSTRUCTIONS}}`.
+pub const REAL_MONEY_INSTRUCTIONS: &str = include_str!("../prompts/real-money.txt");
+pub const NO_BALANCE_INSTRUCTIONS: &str = include_str!("../prompts/no-balance.txt");
 
 const SLUG_LIMIT: usize = 80;
 
@@ -12,6 +15,10 @@ const SLUG_LIMIT: usize = 80;
 #[derive(Debug, Clone, Copy)]
 pub struct TemplateValues<'a> {
     pub game_name: &'a str,
+    /// The mode as the schema names it, such as `real_money`.
+    pub mode: &'a str,
+    /// [`REAL_MONEY_INSTRUCTIONS`] or [`NO_BALANCE_INSTRUCTIONS`].
+    pub mode_instructions: &'a str,
     pub betsson_url: &'a str,
     /// Private run directory: the restore script and whatever the agent works with.
     pub output_dir: &'a str,
@@ -87,7 +94,7 @@ pub fn restore_script(session: &str) -> String {
         })
         .collect();
     let body = if statements.is_empty() {
-        "/* session-block.txt had no statements */".to_owned()
+        "/* the session file had no statements */".to_owned()
     } else {
         statements.join("\n")
     };
@@ -112,6 +119,11 @@ pub fn restore_script(session: &str) -> String {
 pub fn fill_template(template: &str, values: TemplateValues<'_>) -> Result<String> {
     let pairs = [
         ("GAME_NAME", values.game_name),
+        ("MODE", values.mode),
+        (
+            "MODE_INSTRUCTIONS",
+            values.mode_instructions.trim_end_matches('\n'),
+        ),
         ("BETSSON_URL", values.betsson_url),
         ("OUTPUT_DIR", values.output_dir),
         ("ASSETS_DIR", values.assets_dir),
@@ -140,6 +152,8 @@ mod tests {
 
     const VALUES: TemplateValues<'static> = TemplateValues {
         game_name: "Alpha",
+        mode: "no_balance",
+        mode_instructions: "Mode no_balance.\n",
         betsson_url: "https://www.betsson.es/casino",
         output_dir: "/tmp/out",
         assets_dir: "/tmp/assets",
@@ -190,12 +204,12 @@ mod tests {
     #[test]
     fn fill_requires_every_placeholder() {
         let filled = fill_template(
-            "{{GAME_NAME}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{SCHEMA}}",
+            "{{GAME_NAME}}|{{MODE}}|{{MODE_INSTRUCTIONS}}|{{BETSSON_URL}}|{{OUTPUT_DIR}}|{{ASSETS_DIR}}|{{SESSION_NAME}}|{{DATA_PREFIX}}|{{SCHEMA}}",
             VALUES,
         )
         .unwrap();
         assert!(filled.starts_with(
-            "Alpha|https://www.betsson.es/casino|/tmp/out|/tmp/assets|betsson-alpha|/data/assets/alpha|{"
+            "Alpha|no_balance|Mode no_balance.|https://www.betsson.es/casino|/tmp/out|/tmp/assets|betsson-alpha|/data/assets/alpha|{"
         ));
         let error = fill_template("{{GAME_NAME}}", VALUES)
             .unwrap_err()
@@ -206,8 +220,15 @@ mod tests {
 
     #[test]
     fn shipped_template_has_every_placeholder() {
-        let filled = fill_template(TEMPLATE, VALUES).unwrap();
-        assert!(!filled.contains("{{"));
-        assert!(filled.contains("\"schema_version\""));
+        for instructions in [REAL_MONEY_INSTRUCTIONS, NO_BALANCE_INSTRUCTIONS] {
+            let values = TemplateValues {
+                mode_instructions: instructions,
+                ..VALUES
+            };
+            let filled = fill_template(TEMPLATE, values).unwrap();
+            assert!(!filled.contains("{{"));
+            assert!(filled.contains("\"schema_version\""));
+            assert!(filled.contains(instructions.trim_end()));
+        }
     }
 }

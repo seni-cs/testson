@@ -8,6 +8,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use tower_http::services::ServeDir;
 
+use crate::catalog;
 use crate::db::{self, Game, GameSummary};
 
 /// Directory of the data directory whose files are served, at [`ASSETS_URL`].
@@ -134,7 +135,7 @@ async fn get_game_page(
 }
 
 async fn list_games(State(data_dir): State<PathBuf>) -> Result<Json<Vec<GameSummary>>, Error> {
-    Ok(Json(db::select_games(&data_dir)?))
+    Ok(Json(db::select_games(&data_dir, catalog::PROVIDER)?))
 }
 
 async fn get_game(

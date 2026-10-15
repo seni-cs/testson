@@ -1,4 +1,4 @@
-//! Public Betsson games catalogue, and its Novedades collection.
+//! Public Betsson games catalogue, and the games of the provider that is tested.
 //!
 //! Listing reads the Betsson games API. It does not need a login.
 
@@ -12,17 +12,15 @@ use serde_json::{Map, Value};
 
 use anyhow::{Result, anyhow, bail};
 
-/// Page whose embedded config identifies the market, brand, and jurisdiction.
-pub const NOVEDADES_URL: &str = "https://www.betsson.es/casino/novedades";
+/// Casino lobby. A test searches it for the game by name, and its embedded config identifies
+/// the market, brand, and jurisdiction.
+pub const DEFAULT_CASINO_URL: &str = "https://www.betsson.es/casino";
 
 /// Public games catalog.
 pub const GAMES_URL: &str = "https://www.betsson.es/api/v2/games";
 
-/// Collection id for the Novedades page.
-pub const NEW_GAMES_COLLECTION: &str = "NewGames";
-
-/// Lobby used when a demo test searches for a game by name.
-pub const DEFAULT_CASINO_URL: &str = "https://www.betsson.es/casino";
+/// The provider whose games are tested, as the catalogue names it.
+pub const PROVIDER: &str = "PragmaticPlay";
 
 /// Browser user agent sent when reading the public catalog.
 pub const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
@@ -49,7 +47,7 @@ pub struct Game {
     pub image_url: String,
 }
 
-/// Brand and market taken from the Novedades HTML document.
+/// Brand and market taken from the casino lobby HTML document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageConfig {
     /// Market code, such as `es`.
@@ -102,7 +100,7 @@ impl Fetcher for Http {
     }
 }
 
-/// Reads brand, market, and jurisdiction from the Novedades HTML document.
+/// Reads brand, market, and jurisdiction from the casino lobby HTML document.
 ///
 /// # Errors
 ///
@@ -119,16 +117,16 @@ pub fn parse_page_config(html: &str) -> Result<PageConfig> {
             country: country.to_owned(),
             jurisdiction: jurisdiction.to_owned(),
         }),
-        _ => bail!("could not read brand, market, or jurisdiction from {NOVEDADES_URL}"),
+        _ => bail!("could not read brand, market, or jurisdiction from {DEFAULT_CASINO_URL}"),
     }
 }
 
-/// Reads every game of a games API payload, with whether it is in the Novedades collection.
+/// Reads every game of a games API payload.
 ///
 /// # Errors
 ///
 /// Returns an error when the payload is not a JSON list.
-fn parse_catalog(body: &str) -> Result<Vec<(Game, bool)>> {
+fn parse_catalog(body: &str) -> Result<Vec<Game>> {
     let payload: Value = serde_json::from_str(body)
         .map_err(|error| anyhow!("games API did not return JSON ({error})"))?;
     let Some(list) = payload.as_array() else {
@@ -136,10 +134,7 @@ fn parse_catalog(body: &str) -> Result<Vec<(Game, bool)>> {
     };
     Ok(list
         .iter()
-        .filter_map(|value| {
-            let object = value.as_object()?;
-            Some((game_from_object(object)?, in_collection(object)))
-        })
+        .filter_map(|value| game_from_object(value.as_object()?))
         .collect())
 }
 
@@ -150,19 +145,19 @@ fn parse_catalog(body: &str) -> Result<Vec<(Game, bool)>> {
 /// Returns an error when the page cannot be read or parsed.
 fn fetch_page_config(fetcher: &impl Fetcher) -> Result<PageConfig> {
     let bytes = fetcher.fetch(
-        NOVEDADES_URL,
+        DEFAULT_CASINO_URL,
         &[("user-agent", USER_AGENT), ("accept", "text/html")],
     )?;
     let html = String::from_utf8_lossy(&bytes);
     parse_page_config(&html)
 }
 
-/// Downloads every game of the catalogue, with whether it is in the Novedades collection.
+/// Downloads every game of the catalogue.
 ///
 /// # Errors
 ///
 /// Returns an error when the page or the games API cannot be read.
-fn fetch_catalog(fetcher: &impl Fetcher) -> Result<Vec<(Game, bool)>> {
+fn fetch_catalog(fetcher: &impl Fetcher) -> Result<Vec<Game>> {
     let config = fetch_page_config(fetcher)?;
     let headers = [
         ("user-agent", USER_AGENT),
@@ -173,20 +168,20 @@ fn fetch_catalog(fetcher: &impl Fetcher) -> Result<Vec<(Game, bool)>> {
         ("x-obg-device", "Desktop"),
         ("x-obg-country-code", config.country.as_str()),
         ("x-obg-jurisdiction", config.jurisdiction.as_str()),
-        ("referer", NOVEDADES_URL),
+        ("referer", DEFAULT_CASINO_URL),
     ];
     let bytes = fetcher.fetch(GAMES_URL, &headers)?;
     let body = String::from_utf8_lossy(&bytes);
     parse_catalog(&body)
 }
 
-/// Downloads the current Novedades collection, sorted by name.
+/// Downloads the games of [`PROVIDER`], sorted by name.
 ///
 /// # Errors
 ///
-/// Returns an error when the page or the games API cannot be read, or the collection is empty.
-pub fn fetch_novedades(fetcher: &impl Fetcher) -> Result<Vec<Game>> {
-    select_new_games(fetch_catalog(fetcher)?)
+/// Returns an error when the page or the games API cannot be read, or the provider has no games.
+pub fn fetch_provider_games(fetcher: &impl Fetcher) -> Result<Vec<Game>> {
+    select_provider_games(fetch_catalog(fetcher)?)
 }
 
 /// Finds a game of the whole catalogue by its name, ignoring case but preferring a game spelt
@@ -199,20 +194,19 @@ pub fn find_game(fetcher: &impl Fetcher, name: &str) -> Result<Option<Game>> {
     let name = name.trim();
     let games: Vec<Game> = fetch_catalog(fetcher)?
         .into_iter()
-        .map(|(game, _)| game)
         .filter(|game| game.name.to_lowercase() == name.to_lowercase())
         .collect();
     let exact = games.iter().position(|game| game.name == name);
     Ok(games.into_iter().nth(exact.unwrap_or(0)))
 }
 
-fn select_new_games(catalog: Vec<(Game, bool)>) -> Result<Vec<Game>> {
+fn select_provider_games(catalog: Vec<Game>) -> Result<Vec<Game>> {
     let mut games: Vec<Game> = catalog
         .into_iter()
-        .filter_map(|(game, new)| new.then_some(game))
+        .filter(|game| game.provider == PROVIDER)
         .collect();
     if games.is_empty() {
-        bail!("NewGames collection was empty. The previous list was left unchanged.");
+        bail!("the catalogue has no games of {PROVIDER}");
     }
     games.sort_by(|left, right| {
         left.name
@@ -239,17 +233,6 @@ fn game_from_object(object: &Map<String, Value>) -> Option<Game> {
             .unwrap_or(false),
         image_url: content.map(image_url).unwrap_or_default(),
     })
-}
-
-fn in_collection(object: &Map<String, Value>) -> bool {
-    object
-        .get("collections")
-        .and_then(Value::as_array)
-        .is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| item.as_str() == Some(NEW_GAMES_COLLECTION))
-        })
 }
 
 fn trimmed_string<'a>(object: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
@@ -337,31 +320,31 @@ mod tests {
     #[test]
     fn rejects_incomplete_html() {
         let error = parse_page_config("<html></html>").unwrap_err();
-        assert!(error.to_string().contains(NOVEDADES_URL));
+        assert!(error.to_string().contains(DEFAULT_CASINO_URL));
     }
 
-    fn new_games(body: &str) -> Result<Vec<Game>> {
-        select_new_games(parse_catalog(body)?)
+    fn provider_games(body: &str) -> Result<Vec<Game>> {
+        select_provider_games(parse_catalog(body)?)
     }
 
     #[test]
-    fn selects_sorts_and_dedups_new_games() {
+    fn selects_sorts_and_dedups_the_games_of_the_provider() {
         let body = r#"[
-            {"id":"b","name":"Beta","provider":"P","primaryType":"Slots","isAvailableForFun":false,"collections":["NewGames"],"content":{"thumbnail":{"url":"https://example.test/b.png"}}},
-            {"id":"a","name":"Alpha","provider":"P","primaryType":"Slots","isAvailableForFun":true,"collections":["NewGames","Other"],"content":{"thumbnailSquare":{"url":" https://example.test/a.png "},"thumbnail":{"url":"https://example.test/no.png"}}},
-            {"id":"c","name":"Skip","collections":["Other"]},
-            {"id":"a","name":"Alpha again","collections":["NewGames"]},
-            {"name":"No id","collections":["NewGames"]},
+            {"id":"b","name":"Beta","provider":"PragmaticPlay","primaryType":"Slots","isAvailableForFun":false,"content":{"thumbnail":{"url":"https://example.test/b.png"}}},
+            {"id":"a","name":"Alpha","provider":"PragmaticPlay","primaryType":"Slots","isAvailableForFun":true,"content":{"thumbnailSquare":{"url":" https://example.test/a.png "},"thumbnail":{"url":"https://example.test/no.png"}}},
+            {"id":"c","name":"Skip","provider":"Other"},
+            {"id":"a","name":"Alpha again","provider":"PragmaticPlay"},
+            {"name":"No id","provider":"PragmaticPlay"},
             "not-an-object",
-            {"id":"d","name":"  ","collections":["NewGames"]}
+            {"id":"d","name":"  ","provider":"PragmaticPlay"}
         ]"#;
         assert_eq!(
-            new_games(body).unwrap(),
+            provider_games(body).unwrap(),
             [
                 Game {
                     id: "a".into(),
                     name: "Alpha".into(),
-                    provider: "P".into(),
+                    provider: "PragmaticPlay".into(),
                     primary_type: "Slots".into(),
                     is_available_for_fun: true,
                     image_url: "https://example.test/a.png".into(),
@@ -369,7 +352,7 @@ mod tests {
                 Game {
                     id: "b".into(),
                     name: "Beta".into(),
-                    provider: "P".into(),
+                    provider: "PragmaticPlay".into(),
                     primary_type: "Slots".into(),
                     is_available_for_fun: false,
                     image_url: "https://example.test/b.png".into(),
@@ -380,20 +363,20 @@ mod tests {
 
     #[test]
     fn missing_optional_fields_become_empty_strings() {
-        let body = r#"[{"id":"a","name":"Alpha","collections":["NewGames"]}]"#;
-        let game = &new_games(body).unwrap()[0];
+        let game = &parse_catalog(r#"[{"id":"a","name":"Alpha"}]"#).unwrap()[0];
         assert_eq!(game.provider, "");
+        assert_eq!(game.primary_type, "");
         assert_eq!(game.image_url, "");
         assert!(!game.is_available_for_fun);
     }
 
     #[test]
-    fn rejects_an_empty_collection_and_a_non_list() {
-        let empty = new_games(r#"[{"id":"c","name":"Skip","collections":["Other"]}]"#).unwrap_err();
-        assert!(empty.to_string().contains("empty"));
-        let object = new_games(r#"{"games":[]}"#).unwrap_err();
+    fn rejects_a_provider_without_games_and_a_non_list() {
+        let empty = provider_games(r#"[{"id":"c","name":"Skip","provider":"Other"}]"#).unwrap_err();
+        assert!(empty.to_string().contains(PROVIDER));
+        let object = provider_games(r#"{"games":[]}"#).unwrap_err();
         assert!(object.to_string().contains("list"));
-        let broken = new_games("not-json").unwrap_err();
+        let broken = provider_games("not-json").unwrap_err();
         assert!(broken.to_string().contains("JSON"));
     }
 
@@ -405,7 +388,7 @@ mod tests {
     impl Fetcher for MapFetcher {
         fn fetch(&self, url: &str, headers: &[(&str, &str)]) -> Result<Vec<u8>> {
             assert!(headers.iter().any(|(name, _)| *name == "user-agent"));
-            if url == NOVEDADES_URL {
+            if url == DEFAULT_CASINO_URL {
                 return Ok(self.html.as_bytes().to_vec());
             }
             if url == GAMES_URL {
@@ -418,12 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn fetch_novedades_uses_page_config_headers() {
+    fn fetch_provider_games_uses_page_config_headers() {
         let fetcher = MapFetcher {
             html: HTML,
-            games: r#"[{"id":"alpha","name":"Alpha","collections":["NewGames"]}]"#,
+            games: r#"[{"id":"alpha","name":"Alpha","provider":"PragmaticPlay"}]"#,
         };
-        let games = fetch_novedades(&fetcher).unwrap();
+        let games = fetch_provider_games(&fetcher).unwrap();
         assert_eq!(games[0].id, "alpha");
     }
 
@@ -431,8 +414,8 @@ mod tests {
     fn finds_any_game_of_the_catalogue_by_name() {
         let fetcher = MapFetcher {
             html: HTML,
-            games: r#"[{"id":"old","name":"Los Piratas Golfetes","collections":["Popular"]},
-                        {"id":"new","name":"LOS PIRATAS GOLFETES","collections":["NewGames"]}]"#,
+            games: r#"[{"id":"old","name":"Los Piratas Golfetes","provider":"Other"},
+                        {"id":"new","name":"LOS PIRATAS GOLFETES","provider":"Other"}]"#,
         };
         let found = |name| find_game(&fetcher, name).unwrap().unwrap().id;
         assert_eq!(found(" los piratas golfetes "), "old");

@@ -8,7 +8,7 @@
 .playwright-cli/
 
 # Session and auth material, should any end up outside data-dir
-session-block.txt
+session-*.txt
 .env
 .env.*
 auth.json
