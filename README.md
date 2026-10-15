@@ -67,15 +67,17 @@ cargo run -- login --mode no-balance
 
 Betsson blocks the login in the browser Playwright launches, so the login runs in Google Chrome
 instead. testson starts it with a profile of the account's own, `data-dir/browser-<mode>/`, and a
-free DevTools port, attaches `playwright-cli` to that port, and has the agent log in. An open
+free DevTools port, attaches `playwright-cli` to that port, and logs in with the scripts in
+`scripts/`, without an agent: it opens the login form, types the username and password, submits
+it, and waits for the login. An open
 DevTools port makes Chrome set `navigator.webdriver`, which Betsson's fraud check refuses, so
 testson starts Chrome with `--disable-blink-features=AutomationControlled`. The fraud check
 remembers a refused browser by its profile: if the login keeps failing with "Actualiza la página y
-vuelve a intentarlo en breve", delete `data-dir/browser-<mode>/` and log in again. The profile
-is kept, so the next login usually finds the account still logged in and only saves it again. Once
-the agent confirms the login, testson saves the state of the browser and closes Chrome. If the site
-asks for a captcha or a code sent by SMS or email, complete it in the Chrome window: the agent
-waits up to five minutes for it.
+vuelve a intentarlo en breve", delete `data-dir/browser-<mode>/` and log in again. Once the page
+holds the login, testson saves the state of the browser and closes Chrome; a page that is already
+logged in is only saved again. If the site asks for a captcha or a code sent by SMS or email,
+complete it in the Chrome window: testson waits up to five minutes for it. A login takes about 15
+seconds.
 
 The login reads the username and password of each account from its credentials file:
 
@@ -89,12 +91,13 @@ BETSSON_USERNAME=user@example.com
 BETSSON_PASSWORD=the password
 ```
 
-The credentials never reach the agent. testson passes them to `playwright-cli` as two secrets and
-removes the file that held them before the agent starts. The agent types each one by its name,
-`BETSSON_USERNAME` or `BETSSON_PASSWORD`, and every snapshot shows the name, not the value.
+testson passes the credentials to `playwright-cli` as two secrets and removes the file that held
+them before the login starts. They are typed by name, `BETSSON_USERNAME` or `BETSSON_PASSWORD`, so
+no output, snapshot, or file of the run holds their values.
 
 To log in on a browser of your own instead, start it with remote debugging and a profile that is
-not your everyday one, with the same flag, and pass its endpoint with the mode of the account it should log in to:
+not your everyday one, with the same flag, and pass its endpoint with the mode of the account it
+should log in to:
 
 ```sh
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -134,9 +137,10 @@ is, and only when there is none is a new one stored, under an identifier made fr
 URL defaults to `https://www.betsson.es/casino` and must be `https` on a `betsson` host.
 
 For each test it runs, the command prints the runner, status, summary, version, video, the
-report, where the Playwright trace is and the address of the test on the dashboard. It exits 0
-only when, in every mode, the latest test that reached a verdict is `working` and the agent CLI
-exited cleanly.
+report, where the Playwright trace is and the address of the test on the dashboard. At the end it
+prints how long the command took and what its agent runs cost, as the `claude` CLI reports it. It
+exits 0 only when, in every mode, the latest test that reached a verdict is `working` and the agent
+CLI exited cleanly.
 
 A run may take 20 minutes. One that takes longer is stopped and stored as `test_failed`. Either
 way, testson then closes the browser the agent opened.
@@ -199,7 +203,9 @@ game: its first test, its new versions, the scripts created and retired, and its
 ## Watch the Pragmatic Play games
 
 `watch` reads the games whose provider is `PragmaticPlay` from the public games API, about 300 of
-them. Listing does not need a login. The tests need both sessions, saved with `testson login`.
+them. Listing does not need a login. The tests need both sessions: when the session of a mode is
+missing, or a test says it expired, the watch runs `testson login` for that mode first, and tests
+the game again after an expired one.
 
 ```sh
 cargo run -- watch --list
@@ -226,12 +232,19 @@ that leaves the catalogue stays on the dashboard. The first check tests every ga
 which spends one minimum stake per game on the real-money account. Run `test` to test a game
 again.
 
+`--limit` tests at most that many games per check, the games new to the dashboard first, and leaves
+the rest for the next check:
+
+```sh
+cargo run -- watch --limit 1
+```
+
 `--every` repeats the check until you stop it. The interval is at least 60 seconds (`30m`, `1h`,
 or a number of seconds). One watch runs at a time per data directory.
 
 ## Harness and model
 
-`test`, `login`, `ping` and `watch` take `--harness`, `--model`, and `--effort`, or the `TESTSON_HARNESS`,
+`test`, `ping` and `watch` take `--harness`, `--model`, and `--effort`, or the `TESTSON_HARNESS`,
 `TESTSON_MODEL`, and `TESTSON_EFFORT` environment variables.
 
 | Harness            | Default model              | `--effort`                         |
@@ -264,12 +277,12 @@ Adding another agent CLI is one `Harness` variant in `src/harness.rs`, plus its 
 | `src/run.rs`                   | One test in one mode: the agent or the replay, and the fallback |
 | `src/script.rs`                | The rules of a replay script and the replay that runs one       |
 | `src/login.rs`                 | The login in Chrome over its DevTools port, and the saved state |
+| `scripts/login-*.js`           | The steps of the login, run with `playwright-cli run-code`      |
 | `src/report.rs`                | The validation of a report against the schema                   |
 | `src/harness.rs`               | The agent CLIs, model selection and the ping                    |
 | `src/events.rs`                | Readable progress from the claude and grok event streams        |
 | `src/prompt.rs`                | Filling the prompts, the saved sessions and the URL checks      |
 | `prompts/test-game.txt`        | The prompt sent to the agent, compiled into the binary          |
-| `prompts/login.txt`            | The prompt of `login`, compiled into the binary                 |
 | `prompts/real-money.txt`       | The rules and criteria of each mode, put into that prompt       |
 | `prompts/no-balance.txt`       |                                                                 |
 | `migrations/`                  | The SQL migrations, compiled into the binary                    |
@@ -296,7 +309,7 @@ data-dir/
   session-<mode>.json         the saved login of the account, never served
   browser-<mode>/             the Chrome profile `login` uses, never served
   watch.lock
-  runs/login-<mode>-<time>/     private: prompt.filled.txt, model.log
+  runs/login-<mode>-<time>/     private: the login scripts and .playwright-cli/
   runs/<game>-<mode>-<time>/    private: prompt.filled.txt, session.json, the two postMessage
                                 scripts, model.log, script.json, report.json,
                                 .playwright-cli/traces/

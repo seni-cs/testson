@@ -1,10 +1,11 @@
-//! `testson login`: an agent logs in to one account in a real Chrome, reached over the `DevTools`
-//! port, and testson saves its cookies and localStorage as the session of that mode.
+//! `testson login`: testson logs in to one account in a real Chrome, reached over the `DevTools`
+//! port, and saves its cookies and localStorage as the session of that mode.
 //!
 //! Betsson blocks the login in the browser Playwright launches, so the login runs in Google Chrome
-//! instead, started with a profile of its own for each account. The credentials reach the browser
-//! as playwright-cli secrets: the agent types them by name and sees them redacted, and the file
-//! that holds them is gone before the agent starts.
+//! instead, started with a profile of its own for each account. The steps are the scripts in
+//! `scripts/`, run with playwright-cli. The credentials reach the browser as playwright-cli
+//! secrets, typed by name, so no output or log holds them, and the file that holds them is gone
+//! before the first step.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,25 +15,43 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use chrono::Local;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::harness::{Agent, find_on_path};
-use crate::prompt::{LOGIN_TEMPLATE, fill, session_has_auth};
+use crate::harness::find_on_path;
+use crate::prompt::session_has_auth;
 use crate::router::ASSETS_DIR;
 use crate::run::{
-    Mode, RUNS_DIR, absolute, after_echoed_prompt, create_private, create_run_dir,
-    ensure_playwright_cli, last_json_object, playwright_cli, set_mode, write_private,
+    Mode, RUNS_DIR, absolute, create_run_dir, ensure_playwright_cli, playwright_cli, set_mode,
+    write_private,
 };
 
-/// How long the agent may take to log in, a person solving a captcha included.
-const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Opens the login form, or finds the page already logged in. Its `{{BETSSON_URL}}` is replaced.
+const OPEN_SCRIPT: &str = include_str!("../scripts/login-open.js");
+/// Presses the submit button of the filled form.
+const SUBMIT_SCRIPT: &str = include_str!("../scripts/login-submit.js");
+/// Says whether the page is logged in yet, and the error the form shows.
+const STATE_SCRIPT: &str = include_str!("../scripts/login-state.js");
+
+/// How long the login may take once submitted, a person solving a captcha included.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// How often the page is checked for the login.
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How long the site gets to store the whole login once its first key appears.
+const SETTLE: Duration = Duration::from_secs(3);
 
 /// How long Chrome may take to open its `DevTools` port, and to close once asked.
 const CHROME_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The secrets the agent types the credentials with, as the login prompt names them.
+/// The playwright-cli secrets the credentials are typed with.
 const USERNAME: &str = "BETSSON_USERNAME";
 const PASSWORD: &str = "BETSSON_PASSWORD";
+
+/// The fields of the login form. Playwright's CSS reaches into their shadow roots.
+const USERNAME_FIELD: &str = "#email-input";
+const PASSWORD_FIELD: &str = "#password-input";
 
 /// Where `testson login` finds the browser it logs in with.
 pub enum Browser {
@@ -43,34 +62,24 @@ pub enum Browser {
     Attach(String),
 }
 
-/// Checks the tools [`login`] needs and pings the agent, once for every mode it logs in to.
-///
-/// # Errors
-///
-/// Fails when `playwright-cli` or the agent CLI is missing, or the ping fails.
-pub fn ensure_tools(agent: &Agent) -> Result<()> {
-    ensure_playwright_cli()?;
-    agent.ensure_installed()?;
-    println!("Pinging {agent}...");
-    agent.ping()
+/// What `login-state.js` returns.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginState {
+    logged_in: bool,
+    message: String,
 }
 
-/// Logs in to the account of `mode` and saves its session. Says whether it did. Call
-/// [`ensure_tools`] first.
+/// Logs in to the account of `mode` and saves its session. Says whether it did.
 ///
 /// # Errors
 ///
-/// Fails when the credentials are missing, the browser cannot be started or attached to, the
-/// agent cannot start, or the session cannot be saved.
-pub fn login(
-    data_dir: &Path,
-    mode: Mode,
-    url: &str,
-    browser: &Browser,
-    agent: &Agent,
-) -> Result<bool> {
+/// Fails when a tool or the credentials are missing, the browser cannot be started or attached
+/// to, a step of the login breaks, or the session cannot be saved.
+pub fn login(data_dir: &Path, mode: Mode, url: &str, browser: &Browser) -> Result<bool> {
     let credentials_path = data_dir.join(mode.credentials_file());
     let (username, password) = read_credentials(&credentials_path)?;
+    ensure_playwright_cli()?;
 
     let stamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
     let dir = create_run_dir(
@@ -98,10 +107,7 @@ pub fn login(
         }
         Browser::Attach(endpoint) => (None, endpoint.clone()),
     };
-    println!("Mode:    {mode}");
-    println!("Browser: {endpoint}");
-    println!("Agent:   {agent}");
-    println!("Output:  {}", dir.display());
+    println!("Logging in to the {mode} account in {endpoint}");
 
     // The secrets live in the playwright-cli session from here on, so the file goes at once.
     let config = dir.join("cli.config.json");
@@ -122,79 +128,59 @@ pub fn login(
     attached.context("could not attach playwright-cli to the browser")?;
     removed.with_context(|| format!("could not remove {}", config.display()))?;
 
-    let saved = log_in_and_save(data_dir, mode, url, &dir, &session_name, agent);
+    let saved = log_in_and_save(data_dir, mode, url, &dir, &session_name);
     let _ = playwright_cli(&dir, &session_name, "detach", &[]);
     drop(chrome);
-    warn_if_leaked(&dir.join("model.log"), &password);
     saved
 }
 
-/// The prompt forbids reading a filled field, but nothing in playwright-cli enforces it, so this
-/// checks that the password did not reach the agent's transcript.
-fn warn_if_leaked(log_path: &Path, password: &str) {
-    if fs::read_to_string(log_path).is_ok_and(|log| log.contains(password)) {
-        eprintln!(
-            "warning: the password of this account appears in {}, so the model provider received \
-             it. Change the password and delete that file.",
-            log_path.display()
-        );
-    }
-}
-
-/// Runs the agent on the attached browser and, when it logged in, saves the session.
+/// Logs in on the attached browser, unless it already is, and saves the session.
 fn log_in_and_save(
     data_dir: &Path,
     mode: Mode,
     url: &str,
     dir: &Path,
     session_name: &str,
-    agent: &Agent,
 ) -> Result<bool> {
-    let prompt = fill(
-        LOGIN_TEMPLATE,
-        &[
-            ("ACCOUNT", account(mode)),
-            ("BETSSON_URL", url),
-            ("SESSION_NAME", session_name),
-        ],
-    )?;
-    write_private(&dir.join("prompt.filled.txt"), &prompt)?;
-    let log_path = dir.join("model.log");
-    let mut log = create_private(&log_path)?;
-    let transcript = agent.run(&prompt, dir, &mut log, LOGIN_TIMEOUT)?;
-    drop(log);
-    let log_text = fs::read_to_string(&log_path).unwrap_or_default();
-    let is_report = |value: &Value| value.get("status").is_some_and(Value::is_string);
-    let report = transcript
-        .last_message
-        .as_deref()
-        .and_then(|message| last_json_object(message, is_report))
-        .or_else(|| last_json_object(after_echoed_prompt(&log_text, &prompt), is_report));
-    let text = |key: &str| {
-        report
-            .as_ref()
-            .and_then(|report| report.get(key))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    println!();
-    if transcript.exit_code.is_none() {
-        eprintln!(
-            "error: the agent did not log in within {} minutes. See {}",
-            LOGIN_TIMEOUT.as_secs() / 60,
-            log_path.display()
+    let open = OPEN_SCRIPT.replace("{{BETSSON_URL}}", &serde_json::to_string(url)?);
+    let opened = run_script(dir, session_name, "login-open.js", &open)?;
+    if opened == "logged_in" {
+        println!("Already logged in.");
+    } else {
+        playwright_cli(dir, session_name, "fill", &[USERNAME_FIELD, USERNAME])?;
+        playwright_cli(dir, session_name, "fill", &[PASSWORD_FIELD, PASSWORD])?;
+        run_script(dir, session_name, "login-submit.js", SUBMIT_SCRIPT)?;
+        println!(
+            "Submitted. If Betsson asks for a captcha or a code, complete it in the Chrome window \
+             within {} minutes.",
+            LOGIN_TIMEOUT.as_secs() / 60
         );
-        return Ok(false);
-    }
-    if text("status") != "logged_in" {
-        let why = report
-            .as_ref()
-            .map_or("the agent returned no report".to_owned(), |_| {
-                text("message")
-            });
-        eprintln!("error: the login failed: {why}. See {}", log_path.display());
-        return Ok(false);
+        let deadline = Instant::now() + LOGIN_TIMEOUT;
+        loop {
+            let state: LoginState = serde_json::from_value(run_script(
+                dir,
+                session_name,
+                "login-state.js",
+                STATE_SCRIPT,
+            )?)
+            .context("login-state.js returned an unexpected value")?;
+            if state.logged_in {
+                thread::sleep(SETTLE);
+                break;
+            }
+            if !state.message.is_empty() {
+                eprintln!("error: Betsson refused the login: {}", state.message);
+                return Ok(false);
+            }
+            if Instant::now() >= deadline {
+                eprintln!(
+                    "error: the page was not logged in within {} minutes.",
+                    LOGIN_TIMEOUT.as_secs() / 60
+                );
+                return Ok(false);
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
     }
 
     let state_path = dir.join("state.json");
@@ -212,30 +198,36 @@ fn log_in_and_save(
     let state = state?;
     let parsed: Value = serde_json::from_str(&state).context("the saved state is not JSON")?;
     if !session_has_auth(&parsed) {
-        bail!(
-            "the agent said it logged in, but the browser holds no Betsson login. See {}",
-            log_path.display()
-        );
+        bail!("the page looked logged in, but the browser holds no Betsson login");
     }
     let session_path = data_dir.join(mode.session_file());
     let partial = data_dir.join(format!("{}.partial", mode.session_file()));
     write_private(&partial, &state)?;
     fs::rename(&partial, &session_path)
         .with_context(|| format!("could not write {}", session_path.display()))?;
-    println!("Logged in: {}", text("message"));
-    if !text("balance").is_empty() {
-        println!("Balance:   {}", text("balance"));
-    }
-    println!("Saved:     {}", session_path.display());
+    println!("Saved:  {}", session_path.display());
     Ok(true)
 }
 
-/// The account of a mode, as the login prompt names it.
-fn account(mode: Mode) -> &'static str {
-    match mode {
-        Mode::RealMoney => "with balance, used for the real-money tests",
-        Mode::NoBalance => "without balance, used for the no-balance tests",
-    }
+/// Writes `script` to `name` in the run directory, runs it with `run-code`, and returns what it
+/// returned.
+fn run_script(dir: &Path, session: &str, name: &str, script: &str) -> Result<Value> {
+    let path = dir.join(name);
+    write_private(&path, script)?;
+    let output = playwright_cli(
+        dir,
+        session,
+        "run-code",
+        &[
+            "--filename",
+            &absolute(&path)?.display().to_string(),
+            "--raw",
+        ],
+    )
+    .with_context(|| format!("{name} failed"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim())
+        .with_context(|| format!("{name} returned something other than JSON: {stdout}"))
 }
 
 /// Reads `BETSSON_USERNAME` and `BETSSON_PASSWORD` from a file of `KEY=value` lines.
@@ -410,28 +402,21 @@ mod tests {
     }
 
     #[test]
+    fn the_scripts_are_single_functions_run_code_can_wrap() {
+        for script in [OPEN_SCRIPT, SUBMIT_SCRIPT, STATE_SCRIPT] {
+            // run-code wraps the file in parentheses and calls it, so it may not end in `;`.
+            assert!(script.trim_end().ends_with('}'));
+            assert!(script.contains("async (page) =>"));
+            assert!(!script.contains(USERNAME) && !script.contains(PASSWORD));
+        }
+        assert_eq!(OPEN_SCRIPT.matches("{{BETSSON_URL}}").count(), 1);
+    }
+
+    #[test]
     fn rejects_incomplete_or_unknown_credentials() {
         assert!(parse_credentials("BETSSON_USERNAME=a\n").is_err());
         assert!(parse_credentials("BETSSON_USERNAME=a\nBETSSON_PASSWORD=\n").is_err());
         assert!(parse_credentials("BETSSON_USERNAME=a\nBETSSON_PASSWORD=b\nTOKEN=c\n").is_err());
         assert!(parse_credentials("BETSSON_USERNAME a\n").is_err());
-    }
-
-    #[test]
-    fn the_prompt_names_the_secrets_and_not_their_values() {
-        let prompt = fill(
-            LOGIN_TEMPLATE,
-            &[
-                ("ACCOUNT", account(Mode::RealMoney)),
-                ("BETSSON_URL", "https://www.betsson.es/casino"),
-                ("SESSION_NAME", "betsson-login"),
-            ],
-        )
-        .unwrap();
-        assert!(!prompt.contains("{{"));
-        assert!(prompt.contains(&format!("fill <ref of the username field> {USERNAME}")));
-        assert!(prompt.contains(&format!("fill <ref of the password field> {PASSWORD}")));
-        // Running JavaScript in the page could read the filled password.
-        assert!(prompt.contains("Never run `eval`, `run-code`"));
     }
 }

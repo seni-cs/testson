@@ -5,8 +5,6 @@ use serde_json::Value;
 use url::Url;
 
 pub const TEMPLATE: &str = include_str!("../prompts/test-game.txt");
-/// The prompt of `testson login`, which logs in to one account and leaves the browser open.
-pub const LOGIN_TEMPLATE: &str = include_str!("../prompts/login.txt");
 pub const REPORT_SCHEMA: &str = include_str!("../schema/test-game.schema.json");
 pub const SCRIPT_SCHEMA: &str = include_str!("../schema/test-script.schema.json");
 /// Written to each run directory: the agent and the replay run them to capture the postMessages
@@ -137,7 +135,7 @@ pub fn fill_template(template: &str, values: TemplateValues<'_>) -> Result<Strin
 /// # Errors
 ///
 /// Fails when the template lacks one of the placeholders.
-pub fn fill(template: &str, pairs: &[(&str, &str)]) -> Result<String> {
+fn fill(template: &str, pairs: &[(&str, &str)]) -> Result<String> {
     let missing: Vec<String> = pairs
         .iter()
         .map(|(key, _)| format!("{{{{{key}}}}}"))

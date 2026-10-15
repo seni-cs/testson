@@ -46,7 +46,7 @@ Hard rules, for every mode:
 
 {{MODE_INSTRUCTIONS}}
 
-Use status "test_failed" only when the test machinery or the account cannot let the test run (browser will not open, the session is missing or expired, session restore throws, the account is not the one this mode needs, the site blocks the account from playing, or you cannot produce a report). It says nothing about the game.
+Use status "test_failed" only when the test machinery or the account cannot let the test run, or when you could not find or read the game's controls, which says nothing about the game (browser will not open, the session is missing or expired, session restore throws, the account is not the one this mode needs, the site blocks the account from playing, or you cannot produce a report). It says nothing about the game.
 
 Session restore:
 The login is not part of this prompt. `testson test` copied the saved login of this mode's account, its cookies and localStorage, to {{OUTPUT_DIR}}/session.json. Load that file by its path as step 3 shows. Do not rewrite it.
@@ -75,14 +75,16 @@ Instructions:
 4. Find and launch {{GAME_NAME}} in real-money mode:
    - Search the lobby for the exact game name. Do not launch a similarly named game.
    - Open it with the real-money play control.
+   - The site may first show an "Atención" notice that says "Hace menos de 60 mins. que finalizaste tu sesión de juego", with the buttons "Volver a Casino" and "Iniciar sesión". It does not block the account: press its "Iniciar sesión", which starts a new gaming session and asks for no credentials, and fill the form it opens as described next. Do not close the notice and do not press "Volver a Casino". If the page instead says "Se requiere una sesión de juego activa" with "Iniciar una nueva sesión", press that to open the same form.
    - Spanish rules (DGOJ) require a gaming session with a time and loss limit before any real-money game loads. If a dialog asks for "Tiempo de juego" and "Límite de pérdidas" (its title may be "Se ha sobrepasado el límite de tiempo de sesión", and the page behind it may say "Se requiere una sesión de juego activa"), fill it; do not close it. This is not a login: its "Iniciar sesión" button starts the gaming session and asks for no credentials.
      - Tiempo de juego: select "15 Min".
-     - Límite de pérdidas: type 1 into the amount field. If the form rejects 1, type the smallest amount it accepts, up to 5. Never pick a percentage button such as "25%" or "100%", and do not open "Más opciones".
+     - Límite de pérdidas: type 1 into the amount field. If the form rejects 1, type the smallest amount it accepts, up to 5. Never pick a percentage button such as "25%" or "100%", and do not open "Más opciones". An account with no balance gets a form with no loss-limit field: then set only the time and go on.
      - Screenshot the filled form, press "Iniciar sesión", and snapshot again. The game should load. If the form cannot be filled within these limits, stop with status "test_failed" and say why.
      - Record filling the form as its own step, with the time and the loss limit chosen.
-   - If the site blocks the account rather than the game, such as a reached loss or time limit of the gaming session, a pause between sessions, or a self-exclusion, screenshot the message and stop with status "test_failed", quoting it. Do not start another gaming session to get past it, and do not change any limit.
+   - If the site blocks the account rather than the game, such as a reached loss or time limit of the gaming session, or a self-exclusion, and offers no way to start a gaming session, screenshot the message and stop with status "test_failed", quoting it. Do not change any limit to get past it.
    - If the lobby shows any other message instead of opening the game, screenshot it and handle it as this mode says.
    - The game client usually loads in an iframe. If the snapshot does not show the game controls, switch into the provider frame. A safe pattern is `run-code` with `page.frames()` or `locator('iframe').contentFrame()`, then locate controls by role and accessible name.
+   - Pragmatic Play games first show an intro screen: the game logo, its features (such as "WILDS APILABLES", "JUEGOS GRATIS"), a round button with circling arrows below them, and a "NO VOLVER A MOSTRAR" box. That round button only closes the intro; it is not spin and places no bet. Press it once to reach the reels and the bet panel with the balance, the stake ("APUESTA"), and the spin button. Ignore panels outside the game, such as the casino tournaments sidebar.
    - Confirm the game is not in demo mode: the balance inside the game must be the account balance, with no "demo", "fun", or play-money mark.
    - Screenshot the loaded game into {{ASSETS_DIR}}/screenshots/ with `screenshot --filename=<absolute path>`.
    - Read the version of the game client before betting. List its build.js and read the headers of the last one listed:

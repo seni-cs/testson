@@ -176,6 +176,18 @@ impl Outcome {
         self.agent_exit_code == Some(0) && self.status() == "working"
     }
 
+    /// The test broke because the saved session no longer logs in. The prompt has the agent say
+    /// so by naming `testson login`.
+    #[must_use]
+    pub fn needs_login(&self) -> bool {
+        self.status() == "test_failed"
+            && self
+                .document
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .is_some_and(|message| message.contains("testson login"))
+    }
+
     /// The test reached a verdict on the game. `test_failed` means the test itself broke and is
     /// worth retrying.
     #[must_use]
@@ -205,6 +217,13 @@ impl Tested {
     #[must_use]
     pub fn finished(&self) -> bool {
         self.outcomes.iter().any(Outcome::finished)
+    }
+
+    /// None of the tests reached a verdict, and one broke because the saved session no longer
+    /// logs in.
+    #[must_use]
+    pub fn needs_login(&self) -> bool {
+        !self.finished() && self.outcomes.iter().any(Outcome::needs_login)
     }
 }
 
@@ -758,7 +777,7 @@ pub fn playwright_cli(dir: &Path, session: &str, command: &str, args: &[&str]) -
 /// The part of `log` after the prompt, when the harness echoed it.
 ///
 /// The prompt holds an example report, which must not be mistaken for the model's answer.
-pub fn after_echoed_prompt<'a>(log: &'a str, prompt: &str) -> &'a str {
+fn after_echoed_prompt<'a>(log: &'a str, prompt: &str) -> &'a str {
     let last_line = prompt.trim_end().lines().last().unwrap_or_default();
     match log.rfind(last_line) {
         Some(index) if !last_line.is_empty() => &log[index + last_line.len()..],
@@ -780,7 +799,7 @@ pub fn extract_report(output: &str) -> Result<Value> {
 }
 
 /// Returns the last JSON object in `output` that `accept` takes.
-pub fn last_json_object(output: &str, accept: impl Fn(&Value) -> bool) -> Option<Value> {
+fn last_json_object(output: &str, accept: impl Fn(&Value) -> bool) -> Option<Value> {
     output.match_indices('{').rev().find_map(|(start, _)| {
         let mut deserializer = serde_json::Deserializer::from_str(&output[start..]);
         Value::deserialize(&mut deserializer)
@@ -832,7 +851,7 @@ pub fn absolute(path: &Path) -> Result<PathBuf> {
     std::path::absolute(path).with_context(|| format!("could not resolve {}", path.display()))
 }
 
-pub fn create_private(path: &Path) -> Result<File> {
+fn create_private(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]

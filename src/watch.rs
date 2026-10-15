@@ -73,7 +73,9 @@ pub fn parse_interval(value: &str) -> Result<Duration, String> {
 }
 
 /// Stores the games the catalogue has of the provider, and tests each in every mode it has no
-/// verdict in yet for the version its provider serves now.
+/// verdict in yet for the version its provider serves now. Games the database did not have before
+/// this check go first, and `limit`, when given, is how many games are tested; the rest wait for
+/// the next check.
 ///
 /// The version is the ETag of the build.js the latest test of the game loaded, asked for again
 /// without a browser, so a game is tested again only when it changed. When it is unknown, as
@@ -92,10 +94,20 @@ pub fn parse_interval(value: &str) -> Result<Duration, String> {
 pub fn check(
     data_dir: &Path,
     fetcher: &impl Fetcher,
+    limit: Option<usize>,
     mut run_one: impl FnMut(&Game, Mode) -> Result<bool>,
 ) -> Result<()> {
     let games = fetch_provider_games(fetcher)?;
     println!("{PROVIDER}: {} games", games.len());
+    let stored = db::select_game_ids(data_dir)?;
+    let new: Vec<&str> = games
+        .iter()
+        .filter(|game| !stored.contains(&game.id))
+        .map(|game| game.name.as_str())
+        .collect();
+    if !new.is_empty() {
+        println!("New games: {}", new.join(", "));
+    }
     db::upsert_games(data_dir, &games)?;
     let mut pending = Vec::new();
     let mut given_up = Vec::new();
@@ -124,7 +136,22 @@ pub fn check(
     if !changed.is_empty() {
         println!("New versions: {}", changed.join(", "));
     }
+    // Stable, so the catalogue order holds within the new games and within the others.
+    pending.sort_by_key(|(game, _, _)| stored.contains(&game.id));
     println!("Pending tests: {}", pending.len());
+    if let Some(limit) = limit {
+        let mut chosen: Vec<&str> = Vec::new();
+        pending.retain(|(game, _, _)| {
+            if !chosen.contains(&game.id.as_str()) && chosen.len() < limit {
+                chosen.push(&game.id);
+            }
+            chosen.contains(&game.id.as_str())
+        });
+        println!(
+            "Testing {} of them, of {limit} games at most",
+            pending.len()
+        );
+    }
     if !given_up.is_empty() {
         eprintln!(
             "Not retried after {MAX_ATTEMPTS} attempts without a verdict, test them by hand with \
@@ -216,7 +243,7 @@ mod tests {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new(catalog(&["Alpha", "Beta"])));
         let mut tested = Vec::new();
-        check(dir.path(), &fetcher, |game, mode| {
+        check(dir.path(), &fetcher, None, |game, mode| {
             tested.push((game.id.clone(), mode));
             Ok(true)
         })
@@ -243,7 +270,7 @@ mod tests {
     fn a_new_version_is_tested_again() {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
-        check(dir.path(), &fetcher, |_, _| Ok(true)).unwrap();
+        check(dir.path(), &fetcher, None, |_, _| Ok(true)).unwrap();
         for mode in Mode::ALL {
             let document = serde_json::json!({
                 "mode": mode.as_str(),
@@ -255,7 +282,7 @@ mod tests {
         }
         let tested = |fetcher: &Scripted| {
             let mut tested = Vec::new();
-            check(dir.path(), fetcher, |_, mode| {
+            check(dir.path(), fetcher, None, |_, mode| {
                 tested.push(mode);
                 Ok(true)
             })
@@ -268,16 +295,40 @@ mod tests {
     }
 
     #[test]
+    fn new_games_go_first_and_the_limit_counts_games() {
+        let dir = data_dir();
+        let fetcher = Scripted(RefCell::new(catalog(&["Alpha", "Beta"])));
+        check(dir.path(), &fetcher, Some(0), |_, _| {
+            panic!("over the limit")
+        })
+        .unwrap();
+        *fetcher.0.borrow_mut() = catalog(&["Alpha", "Beta", "Gamma"]);
+        let mut tested = Vec::new();
+        check(dir.path(), &fetcher, Some(1), |game, mode| {
+            tested.push((game.id.clone(), mode));
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(
+            tested,
+            [
+                ("gamma".to_owned(), Mode::RealMoney),
+                ("gamma".to_owned(), Mode::NoBalance),
+            ]
+        );
+    }
+
+    #[test]
     fn only_a_verdict_takes_a_game_and_mode_off_the_list() {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new(catalog(&["Alpha", "Beta"])));
-        check(dir.path(), &fetcher, |_, _| Ok(true)).unwrap();
+        check(dir.path(), &fetcher, None, |_, _| Ok(true)).unwrap();
         store(dir.path(), "alpha", Mode::RealMoney, "working");
         store(dir.path(), "alpha", Mode::NoBalance, "failing");
         store(dir.path(), "beta", Mode::RealMoney, "test_failed");
 
         let mut tested = Vec::new();
-        let error = check(dir.path(), &fetcher, |game, mode| {
+        let error = check(dir.path(), &fetcher, None, |game, mode| {
             tested.push((game.id.clone(), mode));
             Ok(false)
         })
@@ -296,12 +347,12 @@ mod tests {
     fn stops_retrying_after_the_maximum_attempts() {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new(catalog(&["Alpha"])));
-        check(dir.path(), &fetcher, |_, _| Ok(true)).unwrap();
+        check(dir.path(), &fetcher, None, |_, _| Ok(true)).unwrap();
         for _ in 0..MAX_ATTEMPTS {
             store(dir.path(), "alpha", Mode::RealMoney, "test_failed");
         }
         let mut tested = Vec::new();
-        check(dir.path(), &fetcher, |_, mode| {
+        check(dir.path(), &fetcher, None, |_, mode| {
             tested.push(mode);
             Ok(true)
         })
@@ -314,7 +365,7 @@ mod tests {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new(catalog(&["Alpha", "Beta"])));
         let mut runs = 0;
-        let error = check(dir.path(), &fetcher, |_, _| {
+        let error = check(dir.path(), &fetcher, None, |_, _| {
             runs += 1;
             Err(anyhow::anyhow!("playwright-cli is not on PATH"))
         })
@@ -327,7 +378,7 @@ mod tests {
     fn a_catalogue_without_the_provider_is_an_error() {
         let dir = data_dir();
         let fetcher = Scripted(RefCell::new("[]".to_owned()));
-        assert!(check(dir.path(), &fetcher, |_, _| panic!("nothing to test")).is_err());
+        assert!(check(dir.path(), &fetcher, None, |_, _| panic!("nothing to test")).is_err());
     }
 
     #[test]

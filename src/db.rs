@@ -4,6 +4,7 @@
 //! at the same time. WAL mode lets them read while another process writes, and the busy timeout
 //! makes a writer wait for another one instead of failing.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -173,6 +174,13 @@ fn latest(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<Latest>> {
             started_at,
             runner,
         }))
+}
+
+/// The ids of every stored game.
+pub fn select_game_ids(data_dir: &Path) -> rusqlite::Result<HashSet<String>> {
+    let connection = connect(data_dir)?;
+    let mut statement = connection.prepare("SELECT id FROM games")?;
+    statement.query_map([], |row| row.get(0))?.collect()
 }
 
 pub fn game_exists(data_dir: &Path, game_id: &str) -> rusqlite::Result<bool> {
