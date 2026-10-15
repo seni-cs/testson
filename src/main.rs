@@ -19,7 +19,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use tokio::net::TcpListener;
 
-use crate::catalog::{DEFAULT_CASINO_URL, Http, fetch_provider_games, find_game};
+use crate::catalog::{DEFAULT_CASINO_URL, Http, fetch_casino, find_game};
 use crate::harness::{Agent, Harness, spent_usd};
 use crate::login::Browser;
 use crate::prompt::{parse_betsson_url, slugify};
@@ -50,7 +50,7 @@ struct AgentArgs {
     #[arg(long, env = "TESTSON_HARNESS", value_enum, default_value_t = Harness::Claude)]
     harness: Harness,
 
-    /// Model passed to the harness. Defaults to sonnet for claude and to the CLI's own default
+    /// Model passed to the harness. Defaults to haiku for claude and to the CLI's own default
     /// for the others.
     #[arg(long, env = "TESTSON_MODEL")]
     model: Option<String>,
@@ -119,7 +119,7 @@ enum Command {
         #[arg(long, env = "TESTSON_CHROME", value_name = "PATH")]
         chrome: Option<PathBuf>,
     },
-    /// Store every Pragmatic Play game of the catalogue on the dashboard, without testing it
+    /// Store every game of the casino section on the dashboard, without testing it
     Sync,
     /// Check a replay script against the rules a replay follows, as the agent does before it ends
     CheckScript {
@@ -135,9 +135,10 @@ enum Command {
         #[command(flatten)]
         agent: AgentArgs,
     },
-    /// Test every Pragmatic Play game in both modes, until each has a verdict
+    /// Test every game of the casino section in both modes, until each has a verdict
     Watch {
-        /// Print the games of the provider and do not save or test.
+        /// Print the games of the casino section, those listed as new first, and do not save or
+        /// test.
         #[arg(long, conflicts_with = "every")]
         list: bool,
 
@@ -145,9 +146,14 @@ enum Command {
         #[arg(long, value_name = "INTERVAL", value_parser = parse_interval)]
         every: Option<Duration>,
 
-        /// Test at most this many games per check, the games new to the dashboard first.
+        /// Test at most this many games per check: the games new to the dashboard first, then
+        /// those Betsson lists as new.
         #[arg(long, value_name = "GAMES")]
         limit: Option<usize>,
+
+        /// Test only the games Betsson lists as new in its casino ("Novedades").
+        #[arg(long)]
+        new_games: bool,
 
         /// Path of the Chrome program a login starts. Found in the usual places by default.
         #[arg(long, env = "TESTSON_CHROME", value_name = "PATH")]
@@ -216,13 +222,7 @@ fn run() -> Result<bool> {
             print_totals(started);
             Ok(passed)
         }
-        Command::Sync => {
-            db::setup(data_dir)?;
-            let games = fetch_provider_games(&Http)?;
-            db::upsert_games(data_dir, &games)?;
-            println!("Stored {} games of {}.", games.len(), catalog::PROVIDER);
-            Ok(true)
-        }
+        Command::Sync => sync(data_dir).map(|()| true),
         Command::CheckScript { file, mode } => {
             let text = std::fs::read_to_string(&file)
                 .with_context(|| format!("could not read {}", file.display()))?;
@@ -237,16 +237,16 @@ fn run() -> Result<bool> {
             println!("{agent} answered.");
             Ok(true)
         }
-        Command::Watch { list: true, .. } => {
-            for game in fetch_provider_games(&Http)? {
-                println!("{}\t{}", game.id, game.name);
-            }
-            Ok(true)
-        }
+        Command::Watch {
+            list: true,
+            new_games,
+            ..
+        } => list_casino(new_games).map(|()| true),
         Command::Watch {
             every,
             runner,
             limit,
+            new_games,
             chrome,
             agent,
             ..
@@ -257,13 +257,13 @@ fn run() -> Result<bool> {
             db::setup(data_dir)?;
             let _lock = WatchLock::acquire(data_dir)?;
             let Some(every) = every else {
-                let checked = check(data_dir, &agent, runner, limit, &browser);
+                let checked = check(data_dir, &agent, runner, limit, new_games, &browser);
                 print_totals(started);
                 checked?;
                 return Ok(true);
             };
             loop {
-                if let Err(error) = check(data_dir, &agent, runner, limit, &browser) {
+                if let Err(error) = check(data_dir, &agent, runner, limit, new_games, &browser) {
                     eprintln!("error: {error:#}");
                 }
                 print_totals(started);
@@ -336,6 +336,34 @@ fn test(
     Ok(passed)
 }
 
+/// Stores every game of the casino section, without testing it.
+fn sync(data_dir: &Path) -> Result<()> {
+    db::setup(data_dir)?;
+    let casino = fetch_casino(&Http)?;
+    db::upsert_games(data_dir, &casino.games)?;
+    println!(
+        "Stored {} games of the casino section, {} of them listed as new.",
+        casino.games.len(),
+        casino.new_games.len()
+    );
+    Ok(())
+}
+
+/// Prints the games of the casino section, those Betsson lists as new first, in its order, or
+/// only those with `new_only`.
+fn list_casino(new_only: bool) -> Result<()> {
+    let casino = fetch_casino(&Http)?;
+    let rank = |game: &catalog::Game| casino.new_games.iter().position(|id| *id == game.id);
+    let mut games: Vec<&catalog::Game> = casino.games.iter().collect();
+    games.retain(|game| !new_only || rank(game).is_some());
+    games.sort_by_key(|game| rank(game).unwrap_or(usize::MAX));
+    for game in games {
+        let mark = if rank(game).is_some() { "new" } else { "" };
+        println!("{}\t{}\t{}\t{mark}", game.id, game.name, game.provider);
+    }
+    Ok(())
+}
+
 /// One check of the watch. It logs in to the account of a mode when its session is missing, and
 /// when a test says the session expired, which it then tests again.
 fn check(
@@ -343,6 +371,7 @@ fn check(
     agent: &Agent,
     runner: Runner,
     limit: Option<usize>,
+    new_games: bool,
     browser: &Browser,
 ) -> Result<()> {
     let log_in = |mode: Mode| {
@@ -362,7 +391,7 @@ fn check(
             runner,
         )
     };
-    watch::check(data_dir, &Http, limit, |game, mode| {
+    watch::check(data_dir, &Http, limit, new_games, |game, mode| {
         if !data_dir.join(mode.session_file()).is_file() {
             println!("No saved session for {mode}. Logging in.");
             log_in(mode)?;

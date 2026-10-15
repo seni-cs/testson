@@ -933,22 +933,23 @@ impl<B: Browser> Run<'_, B> {
         Mark { request, message }
     }
 
-    /// Stops before the spin when the build.js the game loaded has another ETag than the
-    /// script's. Its URL may change, such as from one host of the provider to another.
+    /// Stops before the spin when the file of the game client the script names has another
+    /// version than the script's. The file is found by its path, since its host may change, such
+    /// as from one server of the provider to another.
     fn check_version(&mut self, expected: &GameVersion) -> Result<(), Stop> {
         self.steps.push(report_step(
             "expect",
             "Checked that the game is the version the script was written for",
             None,
         ));
-        let version = self.read_version().map_err(|message| {
+        let version = self.read_version(expected).map_err(|message| {
             self.fail_last(&message);
             Stop::Step(message)
         })?;
         let changed = !report::same_version(&version.etag, &expected.etag);
         let message = format!(
-            "The game loaded build.js with ETag {}, but the script was written for {}.",
-            version.etag, expected.etag
+            "The game loaded {} at version {}, but the script was written for {}.",
+            version.build_url, version.etag, expected.etag
         );
         self.version = Some(version);
         if changed {
@@ -958,17 +959,17 @@ impl<B: Browser> Run<'_, B> {
         Ok(())
     }
 
-    fn read_version(&mut self) -> Result<GameVersion, String> {
-        let listed = self.command(&strings(&[
-            "requests",
-            "--static",
-            "--filter",
-            BUILD_FILTER,
-        ]))?;
+    fn read_version(&mut self, expected: &GameVersion) -> Result<GameVersion, String> {
+        let path = url::Url::parse(&expected.build_url)
+            .map(|url| url.path().to_owned())
+            .map_err(|error| format!("{} is not a URL: {error}", expected.build_url))?;
+        let filter = format!("{}(\\?|#|$)", regex::escape(&path));
+        let listed = self.command(&strings(&["requests", "--static", "--filter", &filter]))?;
         let (index, url) = last_request(&listed)
-            .ok_or("The game did not load a build.js, so its version is unknown.")?;
+            .ok_or_else(|| format!("The game did not load {path}, so its version is unknown."))?;
         let headers = self.command(&strings(&["response-headers", &index.to_string()]))?;
-        let etag = etag(&headers).ok_or("build.js came without an ETag.")?;
+        let etag = version_header(&headers)
+            .ok_or_else(|| format!("{path} came without an ETag or a Last-Modified date."))?;
         Ok(GameVersion {
             build_url: without_query(&url),
             etag,
@@ -1356,9 +1357,6 @@ fn matched(pattern: Option<&Regex>, text: &str, product: bool) -> Result<String,
 pub const CAPTURE_FILE: &str = "capture-messages.js";
 pub const COLLECT_FILE: &str = "collect-messages.js";
 
-/// The `requests --filter` that finds the build.js of a game client.
-const BUILD_FILTER: &str = r"/build\.js(\?|$)";
-
 /// A step of the report, which failed when it has an error.
 fn report_step(action: &str, description: &str, error: Option<&str>) -> Value {
     let mut step = json!({
@@ -1472,12 +1470,15 @@ fn listed_requests(listing: &str) -> impl Iterator<Item = (u32, String)> + '_ {
         .filter_map(|found| Some((found[1].parse().ok()?, found[2].to_owned())))
 }
 
-/// The ETag in a `response-headers` listing.
-fn etag(headers: &str) -> Option<String> {
-    headers.lines().find_map(|line| {
-        let (name, value) = line.trim().split_once(':')?;
-        let value = value.trim();
-        (name.trim().eq_ignore_ascii_case("etag") && !value.is_empty()).then(|| value.to_owned())
+/// The version a `response-headers` listing gives, by [`report::VERSION_HEADERS`].
+fn version_header(headers: &str) -> Option<String> {
+    report::VERSION_HEADERS.iter().find_map(|wanted| {
+        headers.lines().find_map(|line| {
+            let (name, value) = line.trim().split_once(':')?;
+            let value = value.trim();
+            (name.trim().eq_ignore_ascii_case(wanted) && !value.is_empty())
+                .then(|| value.to_owned())
+        })
     })
 }
 

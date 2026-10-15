@@ -68,7 +68,7 @@
         },
         {
           "const": "version_changed",
-          "description": "The game loaded a build.js with another ETag than the one the script was written for, so the replay stopped before betting and the agent tests it again."
+          "description": "The game loaded another version of the file of its client than the one the script was written for, so the replay stopped before betting and the agent tests it again."
         },
         {
           "const": "blocked",
@@ -178,18 +178,18 @@
   "else": { "not": { "required": ["error"] } },
   "$defs": {
     "game_version": {
-      "description": "Which build of the game client the test was run on: the ETag the server of the provider sends with its build.js, as testson read it before the run, or as the browser loaded it when testson could not.",
+      "description": "Which build of the game client the test was run on: the version the server of the provider sends with a file of its client, such as its build.js, as testson read it before the run, or as the browser loaded it when testson could not.",
       "type": "object",
       "additionalProperties": false,
       "required": ["build_url", "etag"],
       "properties": {
         "build_url": {
-          "description": "URL of the build.js of the game client, without its query string.",
+          "description": "URL of the file of the game client whose version marks its release, such as the build.js of Pragmatic Play, without its query string.",
           "type": "string",
           "format": "uri"
         },
         "etag": {
-          "description": "ETag response header of build.js, as sent, quotes included.",
+          "description": "The version of that file: its ETag response header, as sent, quotes included, or its Last-Modified header when it has no ETag.",
           "type": "string",
           "minLength": 1
         }

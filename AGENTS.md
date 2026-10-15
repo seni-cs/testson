@@ -1,11 +1,14 @@
 # AGENTS
 
-testson tests every Pragmatic Play game of the Betsson casino with two test accounts, one with
-balance that plays a real-money round and one without balance that must be told it cannot bet, with
-an AI coding agent that drives `playwright-cli`, and shows the results on a dashboard: a CLI that
-runs the agent and writes to SQLite, an axum server that reads it, and pages in plain HTML, CSS and
-JavaScript. The agent tests each version of a game once and leaves a replay script, which testson
-runs without an agent until the version, the ETag of the game's `build.js`, changes. See `README.md` for the layout and the routes.
+testson tests every game of the casino section of Betsson, of every provider, with two test
+accounts, one with balance that plays a real-money round and one without balance that must be told
+it cannot bet, with an AI coding agent that drives `playwright-cli`, and shows the results on a
+dashboard: a CLI that runs the agent and writes to SQLite, an axum server that reads it, and pages
+in plain HTML, CSS and JavaScript. The agent tests each version of a game once and leaves a replay
+script, which testson runs without an agent until the version changes: the ETag, or else the
+Last-Modified date, of a file of the game client that changes with each release, such as the
+`build.js` of Pragmatic Play. The games of the casino section, and those Betsson lists as new, come
+from its public game collections. See `README.md` for the layout and the routes.
 
 ## Checks
 

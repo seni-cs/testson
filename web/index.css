@@ -5,8 +5,112 @@
     margin-bottom: 1.25rem;
 }
 
-.legend {
+.tools {
+    align-items: center;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.legend,
+.providers {
     position: relative;
+}
+
+.providers summary {
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    display: flex;
+    font-size: var(--font-md);
+    font-weight: 600;
+    gap: 0.375rem;
+    height: 2rem;
+    list-style: none;
+    max-width: 16rem;
+    padding: 0 0.75rem;
+    white-space: nowrap;
+}
+
+.providers summary::-webkit-details-marker {
+    display: none;
+}
+
+.providers summary::after {
+    border-bottom: 2px solid currentcolor;
+    border-right: 2px solid currentcolor;
+    content: "";
+    height: 0.375rem;
+    margin: 0 0 0.25rem 0.25rem;
+    transform: rotate(45deg);
+    width: 0.375rem;
+}
+
+#providers-chosen {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.providers summary:hover,
+.providers[open] summary {
+    border-color: var(--primary);
+}
+
+/* Hangs from the button, over the page, like the legend. */
+.providers .menu {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px #00000026;
+    margin-top: 0.5rem;
+    max-height: min(26rem, 70vh);
+    overflow-y: auto;
+    padding: 0.5rem;
+    position: absolute;
+    right: 0;
+    width: min(18rem, 80vw);
+    z-index: 1;
+}
+
+.providers ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.providers label {
+    align-items: center;
+    border-radius: var(--radius-control);
+    cursor: pointer;
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.375rem 0.5rem;
+}
+
+.providers label:hover {
+    background: var(--surface);
+}
+
+.providers label .count {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+    margin-left: auto;
+}
+
+.show-all {
+    background: none;
+    border: none;
+    color: var(--primary-text);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--font-sm);
+    font-weight: 600;
+    padding: 0.375rem 0.5rem;
+}
+
+.show-all:disabled {
+    color: var(--text-muted);
+    cursor: default;
 }
 
 .legend summary {

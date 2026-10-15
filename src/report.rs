@@ -65,7 +65,13 @@ enum ScriptOutcome {
     Blocked,
 }
 
-/// Which build of a game client was loaded, by the ETag of its build.js.
+/// The response headers that mark the version of the file of a game client, in the order they
+/// are preferred: its ETag or, when the server sends none, its Last-Modified date.
+pub const VERSION_HEADERS: [&str; 2] = ["etag", "last-modified"];
+
+/// Which build of a game client was loaded: a file of the client that changes with each release
+/// and keeps its URL, such as the build.js of Pragmatic Play, and its version, the first of
+/// [`VERSION_HEADERS`] its server sent.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameVersion {
