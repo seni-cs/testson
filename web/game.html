@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>testson</title>
+        <link rel="stylesheet" href="/common.css" />
+        <link rel="stylesheet" href="/game.css" />
+    </head>
+    <body>
+        <header class="topbar">
+            <a class="brand" href="/">testson</a>
+        </header>
+        <main>
+            <a class="back" href="/">&larr; Todos los juegos</a>
+            <p id="error" role="alert" hidden></p>
+            <header id="game" class="banner"></header>
+            <div class="layout">
+                <aside id="sidebar" class="card sidebar" hidden>
+                    <h2>Tests <span id="count" class="count"></span></h2>
+                    <nav id="tests" aria-label="Tests de este juego"></nav>
+                </aside>
+                <article id="test" class="card detail" hidden></article>
+            </div>
+        </main>
+        <dialog id="viewer" class="viewer">
+            <form method="dialog">
+                <button class="close" aria-label="Cerrar">&times;</button>
+            </form>
+            <figure id="media"></figure>
+        </dialog>
+        <script src="/common.js"></script>
+        <script src="/game.js"></script>
+    </body>
+</html>

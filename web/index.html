@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>testson</title>
+        <link rel="stylesheet" href="/common.css" />
+        <link rel="stylesheet" href="/index.css" />
+    </head>
+    <body>
+        <header class="topbar">
+            <a class="brand" href="/">testson</a>
+        </header>
+        <main>
+            <header class="heading">
+                <h1>Juegos</h1>
+                <details class="legend">
+                    <summary aria-label="Qué significa cada color">?</summary>
+                    <ul id="legend"></ul>
+                </details>
+            </header>
+            <p id="error" role="alert" hidden></p>
+            <nav id="filters" class="filters" aria-label="Filtrar los juegos por resultado"></nav>
+            <section id="games" class="games"></section>
+        </main>
+        <script src="/common.js"></script>
+        <script src="/index.js"></script>
+    </body>
+</html>

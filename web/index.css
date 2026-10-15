@@ -1,0 +1,196 @@
+.heading {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 1.25rem;
+}
+
+.legend {
+    position: relative;
+}
+
+.legend summary {
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    cursor: pointer;
+    font-weight: 600;
+    height: 2rem;
+    line-height: calc(2rem - 2px);
+    list-style: none;
+    text-align: center;
+    width: 2rem;
+}
+
+.legend summary::-webkit-details-marker {
+    display: none;
+}
+
+.legend summary:hover,
+.legend[open] summary {
+    border-color: var(--primary);
+    color: var(--primary-text);
+}
+
+/* Hangs from the button, over the page, so that opening it moves nothing. */
+.legend ul {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px #00000026;
+    display: grid;
+    gap: 0.875rem;
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 1rem;
+    position: absolute;
+    right: 0;
+    width: min(21rem, 80vw);
+    z-index: 1;
+}
+
+.legend li {
+    align-items: start;
+    display: flex;
+    gap: 0.75rem;
+}
+
+.legend .dot {
+    margin-top: 0.375rem;
+}
+
+.legend li div {
+    display: grid;
+    gap: 0.125rem;
+}
+
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+}
+
+.filter {
+    align-items: center;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    font-size: var(--font-md);
+    font-weight: 600;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+}
+
+.filter:hover:enabled,
+.filter[aria-pressed="true"] {
+    border-color: var(--primary);
+}
+
+.filter[aria-pressed="true"] {
+    color: var(--primary-text);
+}
+
+.filter:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+/* A phone has no room for the names, so there the dot stands for its status by itself. The name
+   stays for screen readers, and the legend says what each colour means. */
+.filter .label {
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}
+
+@media (min-width: 600px) {
+    .filter .label {
+        all: unset;
+    }
+}
+
+.games {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+}
+
+/* The image of the game from edge to edge on the left, and what is known about it on the right. */
+.game {
+    --cover-size: 7.5rem;
+    color: inherit;
+    display: grid;
+    grid-template-columns: var(--cover-size) minmax(0, 1fr);
+    min-height: var(--cover-size);
+    overflow: hidden;
+}
+
+.game:hover {
+    border-color: var(--primary);
+    text-decoration: none;
+}
+
+/* As tall as the card, which is as tall as the image is wide unless its text needs more. */
+.game .cover {
+    aspect-ratio: auto;
+    border-radius: 0;
+}
+
+.game .about {
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem;
+}
+
+/* With more room than a phone has, the image and the text beside it take a little more. */
+@media (min-width: 600px) {
+    .game {
+        --cover-size: 8.5rem;
+    }
+
+    .game .about {
+        padding: 0.875rem 1rem;
+    }
+}
+
+.game h2 {
+    -webkit-box-orient: vertical;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+}
+
+/* Kept at the bottom of the card, whatever the length of the name above. */
+.game dl {
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: 0.25rem;
+    margin: auto 0 0;
+    padding-top: 0.625rem;
+}
+
+/* A fact per line, with its name at one end and its value at the other. A card too narrow for
+   both puts the value under the name. */
+.game dl div {
+    align-items: baseline;
+    column-gap: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+}
+
+.game dd {
+    align-items: center;
+    display: flex;
+    font-size: var(--font-sm);
+    gap: 0.5rem;
+    margin: 0;
+}
