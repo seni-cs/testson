@@ -1,5 +1,7 @@
 # testson
 
+Screenshots in sample_screenshots directory.
+
 **An AI agent tests every casino game with real money once per version, then hands the job to a
 replay script that runs with no model at all.**
 
