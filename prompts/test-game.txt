@@ -43,7 +43,7 @@ Hard rules, for every mode:
 
 {{MODE_INSTRUCTIONS}}
 
-Use status "test_failed" only when the test machinery or the account cannot let the test run (browser will not open, the session is missing or expired, session restore throws, the account is not the one this mode needs, or you cannot produce a report). It says nothing about the game.
+Use status "test_failed" only when the test machinery or the account cannot let the test run (browser will not open, the session is missing or expired, session restore throws, the account is not the one this mode needs, the site blocks the account from playing, or you cannot produce a report). It says nothing about the game.
 
 Session restore:
 The login is not part of this prompt. `testson test` wrote the login of this mode's account to {{OUTPUT_DIR}}/restore-session.js, which stores it in the page. Run that file by its path as step 3 shows. Do not rewrite it.
@@ -75,6 +75,7 @@ Instructions:
      - Límite de pérdidas: type 1 into the amount field. If the form rejects 1, type the smallest amount it accepts, up to 5. Never pick a percentage button such as "25%" or "100%", and do not open "Más opciones".
      - Screenshot the filled form, press "Iniciar sesión", and snapshot again. The game should load. If the form cannot be filled within these limits, stop with status "test_failed" and say why.
      - Record filling the form as its own step, with the time and the loss limit chosen.
+   - If the site blocks the account rather than the game, such as a reached loss or time limit of the gaming session, a pause between sessions, or a self-exclusion, screenshot the message and stop with status "test_failed", quoting it. Do not start another gaming session to get past it, and do not change any limit.
    - If the lobby shows any other message instead of opening the game, screenshot it and handle it as this mode says.
    - The game client usually loads in an iframe. If the snapshot does not show the game controls, switch into the provider frame. A safe pattern is `run-code` with `page.frames()` or `locator('iframe').contentFrame()`, then locate controls by role and accessible name.
    - Confirm the game is not in demo mode: the balance inside the game must be the account balance, with no "demo", "fun", or play-money mark.

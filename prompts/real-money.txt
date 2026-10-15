@@ -7,4 +7,4 @@ Mode real_money: the account has balance, and one round is played for real money
 Expected criteria (all must pass for status "working"):
 1. The game launches in real-money mode and shows the account balance.
 2. One round at the minimum stake completes, and the balance changes by the stake and the win, if any.
-If the game does not launch, the round errors or never settles, or the balance is wrong, status is "failing".
+If the game itself does not launch (a block of the account, as described above, is "test_failed"), the round errors or never settles, or the balance is wrong, status is "failing".

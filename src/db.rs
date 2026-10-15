@@ -123,8 +123,8 @@ fn catalog_game(row: &Row<'_>) -> rusqlite::Result<catalog::Game> {
     })
 }
 
-/// Select every game of `provider`, by name.
-pub fn select_games(data_dir: &Path, provider: &str) -> rusqlite::Result<Vec<GameSummary>> {
+/// Select every game, by name.
+pub fn select_games(data_dir: &Path) -> rusqlite::Result<Vec<GameSummary>> {
     let connection = connect(data_dir)?;
     let mut statement = connection.prepare(
         "SELECT games.id, games.name, games.image_url, games.added_on,
@@ -139,10 +139,9 @@ pub fn select_games(data_dir: &Path, provider: &str) -> rusqlite::Result<Vec<Gam
              SELECT id FROM tests WHERE game_id = games.id AND mode = 'no_balance'
              ORDER BY started_at DESC, id DESC LIMIT 1
          )
-         WHERE games.provider = ?1
          ORDER BY games.name COLLATE NOCASE, games.id",
     )?;
-    let games = statement.query_map([provider], |row| {
+    let games = statement.query_map([], |row| {
         Ok(GameSummary {
             id: row.get(0)?,
             name: row.get(1)?,
