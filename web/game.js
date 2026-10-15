@@ -23,6 +23,10 @@ function formatDateTime(timestamp) {
     return new Date(timestamp).toLocaleString(LOCALE, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function formatTestTime(timestamp) {
+    return new Date(timestamp).toLocaleTimeString(LOCALE, { timeStyle: "short" });
+}
+
 function formatShortDateTime(timestamp) {
     return new Date(timestamp).toLocaleString(LOCALE, { dateStyle: "short", timeStyle: "short" });
 }
@@ -333,23 +337,67 @@ function testHash(test) {
 function renderTestLink(test) {
     const link = element("a", "test-link");
     link.href = testHash(test);
-    link.append(
-        element("span", "", MODE_LABELS[test.mode]),
-        renderRunner(test.runner),
-        element("span", "when", formatShortDateTime(test.started_at)),
-        renderLabelledDot(test.status),
-    );
+    const runner = test.runner ?? "agent";
+    link.ariaLabel = `${MODE_LABELS[test.mode]} · ${formatDateTime(test.started_at)} · ${STATUS_LABELS[test.status]} · ${RUNNER_LABELS[runner]} · Test ${test.id}`;
+    const label = element("span", "test-mode-label", MODE_LABELS[test.mode]);
+    label.append(renderRunner(runner));
+    link.append(renderLabelledDot(test.status), label);
     return link;
+}
+
+// Group a game's tests by the same local calendar day used to display their dates.
+function renderTestGroups(tests) {
+    const days = new Map();
+    const newestFirst = [...tests].sort(
+        (a, b) => new Date(b.started_at) - new Date(a.started_at) || b.id - a.id,
+    );
+    for (const test of newestFirst) {
+        const date = new Date(test.started_at);
+        const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+        if (!days.has(key)) {
+            days.set(key, []);
+        }
+        days.get(key).push(test);
+    }
+
+    return Array.from(days.values(), (day) => {
+        const group = element("section", "test-day");
+        const heading = element("h3", "test-day-heading", formatDay(day[0].started_at));
+        const earliest = day[day.length - 1].started_at;
+        const time = element("time", "when", formatTestTime(earliest));
+        time.dateTime = earliest;
+        heading.append(time);
+        const columns = element("div", "test-modes");
+        // Preserve reports from before the two account modes as their own column.
+        const modes = day.some((test) => test.mode !== "demo") ? [...MODES] : [];
+        if (day.some((test) => test.mode === "demo")) {
+            modes.push("demo");
+        }
+        for (const mode of modes) {
+            const matching = day.filter((test) => test.mode === mode);
+            if (!matching.length) {
+                continue;
+            }
+            const column = element("div", `test-mode ${mode}`);
+            const list = element("div", "test-mode-list");
+            list.append(...matching.map(renderTestLink));
+            column.append(list);
+            columns.append(column);
+        }
+        group.append(heading, columns);
+        return group;
+    });
 }
 
 // Scroll the list of tests, and nothing but the list, just enough to bring one of them in sight.
 function revealTestLink(link) {
-    const list = link.parentElement;
-    const bottom = link.offsetTop + link.offsetHeight;
-    if (link.offsetTop < list.scrollTop) {
-        list.scrollTop = link.offsetTop;
-    } else if (bottom > list.scrollTop + list.clientHeight) {
-        list.scrollTop = bottom - list.clientHeight;
+    const list = document.getElementById("tests");
+    const bounds = list.getBoundingClientRect();
+    const selected = link.getBoundingClientRect();
+    if (selected.top < bounds.top) {
+        list.scrollTop += selected.top - bounds.top;
+    } else if (selected.bottom > bounds.bottom) {
+        list.scrollTop += selected.bottom - bounds.bottom;
     }
 }
 
@@ -363,7 +411,7 @@ function showSelectedTest(tests) {
     }
     // Tests come newest first.
     const selected = named ?? tests[0];
-    for (const link of document.getElementById("tests").children) {
+    for (const link of document.querySelectorAll("#tests .test-link")) {
         const isSelected = link.hash === testHash(selected);
         link.ariaCurrent = String(isSelected);
         // The list only has room for some tests, so it is scrolled to the selected one.
@@ -477,9 +525,8 @@ async function showGame() {
         return;
     }
 
-    const links = game.tests.map(renderTestLink);
-    document.getElementById("count").textContent = links.length;
-    document.getElementById("tests").append(...links);
+    document.getElementById("count").textContent = game.tests.length;
+    document.getElementById("tests").append(...renderTestGroups(game.tests));
     document.getElementById("sidebar").hidden = false;
     document.getElementById("events").append(...renderHistory(game));
     document.getElementById("history").hidden = false;

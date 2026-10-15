@@ -100,7 +100,9 @@ figcaption {
 }
 
 .sidebar {
-    padding: 0.75rem;
+    background: transparent;
+    border: 0;
+    padding: 0;
 }
 
 .sidebar h2 {
@@ -108,7 +110,9 @@ figcaption {
     display: flex;
     font-size: var(--font-xs);
     justify-content: space-between;
-    padding: 0.25rem 0.75rem 0.5rem 0.5rem;
+    align-items: center;
+    letter-spacing: 0.06em;
+    padding: 0.25rem 0.25rem 1rem;
     text-transform: uppercase;
 }
 
@@ -117,15 +121,14 @@ figcaption {
     font-weight: 700;
 }
 
-/* As tall as eight tests and the gaps between them; the rest are reached by scrolling it.
-   The space on its right, taken back from the card around it, keeps the scrollbar off the tests. */
+/* Dates share one scroll area so both account modes stay together. */
 #tests {
-    --link-height: 2.375rem;
+    --link-height: 2.625rem;
     align-content: start;
     display: grid;
-    gap: 0.5rem;
+    gap: 0.75rem;
     margin-right: -0.625rem;
-    max-height: calc(8 * var(--link-height) + 7 * 0.5rem);
+    max-height: min(65vh, 34rem);
     overflow-y: auto;
     padding-right: 0.625rem;
     /* The tests are placed against it when the list is scrolled to one of them. */
@@ -133,43 +136,111 @@ figcaption {
     scrollbar-width: thin;
 }
 
-.test-link {
-    align-items: center;
+.test-day {
     background: var(--background);
     border: 1px solid var(--border);
-    border-radius: var(--radius-control);
+    border-radius: var(--radius);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.test-day-heading {
+    align-items: center;
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--font-sm);
+    gap: 0.75rem;
+    justify-content: space-between;
+    margin: 0;
+    padding: 0.75rem 0.875rem;
+}
+
+.test-day-heading .when {
+    color: var(--text-muted);
+    font-size: var(--font-2xs);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.test-modes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.test-mode {
+    min-width: 0;
+}
+
+.test-mode.real_money {
+    grid-column: 1;
+}
+
+.test-mode.no_balance {
+    border-left: 1px solid var(--border);
+    grid-column: 2;
+}
+
+.test-mode.demo {
+    grid-column: 1 / -1;
+}
+
+.test-mode.demo:not(:first-child) {
+    border-top: 1px solid var(--border);
+}
+
+.test-mode-list {
+    display: grid;
+}
+
+.test-link {
+    align-items: center;
+    border-left: 3px solid transparent;
     box-sizing: border-box;
     color: var(--text);
     display: flex;
     font-size: var(--font-sm);
-    gap: 0.75rem;
+    gap: 0.625rem;
     height: var(--link-height);
-    justify-content: space-between;
-    padding: 0 0.75rem;
+    padding: 0 0.875rem 0 0.6875rem;
 }
 
-.test-link:hover,
-.test-link[aria-current="true"] {
-    border-color: var(--primary);
+.test-link:hover {
+    background: var(--surface);
     text-decoration: none;
 }
 
 .test-link[aria-current="true"] {
-    background: var(--surface-accent);
+    background: color-mix(in srgb, var(--primary) 9%, var(--background));
+    border-left-color: var(--primary);
+    color: var(--primary-text);
     font-weight: 600;
 }
 
-/* The mode at the start, and the time and the dot together at the end. */
-.test-link .when {
-    color: var(--text-muted);
-    margin-left: auto;
-    white-space: nowrap;
+.test-link .dot {
+    flex: none;
+    height: 0.4375rem;
+    width: 0.4375rem;
+}
+
+.test-mode-label {
+    align-items: start;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 0.125rem;
+    line-height: 1.2;
+}
+
+.test-mode-label .runner {
+    font-size: 0.5625rem;
 }
 
 /* Beside the test on wide screens, where the list stays in view while the test scrolls. */
 @media (min-width: 800px) {
     .layout {
-        grid-template-columns: minmax(0, 1fr) 16rem;
+        grid-template-columns: minmax(0, 1fr) 18rem;
     }
 
     .sidebar {
